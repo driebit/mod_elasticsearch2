@@ -24,8 +24,8 @@ file:
 
 Or in your site config:
 
-    `mod_elasticsearch2.host`
-    `mod_elasticsearch2.port`
+ * `mod_elasticsearch2.host`
+ * `mod_elasticsearch2.port`
 
 
 ### Security config of Elastic.
