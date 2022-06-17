@@ -10,7 +10,7 @@ Configuration
 -------------
 
 To configure the Elasticsearch host and port, edit your 
-[erlang.config](http://docs.zotonic.com/en/latest/ref/configuration/zotonic-configuration.html)
+[zotonic.config](http://docs.zotonic.com/en/latest/ref/configuration/zotonic-configuration.html)
 file:
 
 ```erlang
