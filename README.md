@@ -28,7 +28,7 @@ Or in your site config:
  * `mod_elasticsearch2.port`
 
 
-### Security config of Elastic.
+### Elasticsearch security config
 
 Out of the box Elastic is configured to use TLS and passwords.
 Both are not (yet) supported by this library, and also don't have any purpose on localhost.
