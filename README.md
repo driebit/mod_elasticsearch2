@@ -16,10 +16,8 @@ file:
 ```erlang
 [
     %% ...
-    {elasticsearch2_host, [
-        {host, <<"elasticsearch">>}, %% Defaults to 127.0.0.1
-        {port, 9200}                 %% Defaults to 9200
-    ]},
+    {elasticsearch2_host, <<"elasticsearch">>},  %% Defaults to 127.0.0.1
+    {elasticsearch2_port, 9200},                 %% Defaults to 9200
     %% ...
 ].
 ```
@@ -28,6 +26,26 @@ Or in your site config:
 
     `mod_elasticsearch2.host`
     `mod_elasticsearch2.port`
+
+
+### Security config of Elastic.
+
+Out of the box Elastic is configured to use TLS and passwords.
+Both are not (yet) supported by this library, and also don't have any purpose on localhost.
+
+The following change must be made to `config/elasticsearch.yml`:
+
+```yaml
+# Disable security features
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+
+# Disable encryption for HTTP API client connections, such as Kibana, Logstash, and Agents
+xpack.security.http.ssl:
+  enabled: false
+  keystore.path: certs/http.p12
+
+```
 
 
 Search queries
