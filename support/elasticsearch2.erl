@@ -53,7 +53,7 @@
 
 -export_type([ connection/0, doc_id/0, index/0, bulkcmd/0, result/0, reason/0 ]).
 
-% -include("zotonic.hrl").
+-include("zotonic.hrl").
 -include("../include/elasticsearch2.hrl").
 
 %% @doc Get Elasticsearch connection params from config
@@ -175,7 +175,8 @@ put_doc(Index, RscId, Context) ->
     Context :: z:context(),
     Result :: result().
 put_doc(Index, DocId, Data, Context) ->
-    Data1 = z_notifier:foldl(#elasticsearch_put{ index = Index, id = DocId }, Data, Context),
+    Type = maps:get(<<"es_type">>, Data, maps:get(es_type, Data, <<>>)),
+    Data1 = z_notifier:foldl(#elasticsearch_put{ index = Index, type = Type, id = DocId }, Data, Context),
     elasticsearch2_fetch:index(connection(Context), Index, DocId, Data1).
 
 -spec delete_doc( DocId, Context ) -> Result when

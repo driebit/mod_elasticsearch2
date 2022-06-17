@@ -1,26 +1,10 @@
-mod_elasticsearch
-=================
-
-[![Build Status](https://travis-ci.com/driebit/mod_elasticsearch.svg?branch=master)](https://travis-ci.com/driebit/mod_elasticsearch)
+mod_elasticsearch2
+==================
 
 This [Zotonic](https://github.com/zotonic/zotonic) module gives you more relevant search results
 by making resources searchable through  
 [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html).
 
-Installation
-------------
-
-mod_elasticsearch acts as a bridge between Zotonic and the [tsloughter/erlastic_search](https://github.com/tsloughter/erlastic_search)
-Erlang library, so install that and its dependencies first by adding them to `deps` in `zotonic.config`:
-
-```erlang
-{deps, [
-    %% ...
-    {erlastic_search, ".*", {git, "https://github.com/tsloughter/erlastic_search.git", {tag, "master"}}},
-    {hackney, ".*", {git, "https://github.com/benoitc/hackney.git", {tag, "1.6.1"}}},
-    {jsx, ".*", {git, "https://github.com/talentdeficit/jsx.git", {tag, "2.8.0"}}}      
-]}
-```
 
 Configuration
 -------------
@@ -32,13 +16,19 @@ file:
 ```erlang
 [
     %% ...
-    {erlastic_search, [
+    {elasticsearch2_host, [
         {host, <<"elasticsearch">>}, %% Defaults to 127.0.0.1
         {port, 9200}                 %% Defaults to 9200
     ]},
     %% ...
 ].
 ```
+
+Or in your site config:
+
+    `mod_elasticsearch2.host`
+    `mod_elasticsearch2.port`
+
 
 Search queries
 --------------
@@ -153,7 +143,7 @@ person resources:
 ```erlang
 %% your_site.erl
 
--include_lib("mod_elasticsearch/include/elasticsearch.hrl").
+-include_lib("mod_elasticsearch2/include/elasticsearch.hrl").
 
 -export([
     % ...
@@ -161,19 +151,21 @@ person resources:
 ]).
 
 -spec observe_elasticsearch_put(#elasticsearch_put{}, map(), z:context()) -> map().
-observe_elasticsearch_put(#elasticsearch_put{id = Id}, Props, Context) ->
+observe_elasticsearch_put(#elasticsearch_put{ index = _, type = <<"resource">>, id = Id }, Data, Context) ->
     case m_rsc:is_a(Id, person, Context) of
         true ->
-            Props#{zodiac => calculate_zodiac(Id, Context)};
+            Data#{ zodiac => calculate_zodiac(Id, Context) };
         false ->
-            Props
-    end.
+            Data
+    end;
+observe_elasticsearch_put(#elasticsearch_put{}, Data, Context) ->
+    Data.
 ```
 
 Logging
 -------
 
-By default, mod_elasticsearch logs outgoing queries at the debug log level. To
+By default, mod_elasticsearch2 logs outgoing queries at the debug log level. To
 see them in your Zotonic console, change the minimum log level to debug:
 
 ```erlang

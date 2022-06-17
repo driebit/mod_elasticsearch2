@@ -203,9 +203,11 @@ map_score_function(_, _, _) ->
 do_search(ElasticQuery, QArgs, ZotonicQuery, {From, Size}, Context) ->
     ElasticQuery1 = fix_type(fix_aggregation_sort(ElasticQuery)),
     Index = z_convert:to_binary(proplists:get_value(index, ZotonicQuery, elasticsearch2:index(Context))),
+    JSON = jsx:encode(ElasticQuery1),
+    lager:debug("mod_elasticsearch2 (~s): ~s", [ Index, JSON ]),
     % io:format("~p:~p: (~s) ~n~p~n~n", [ ?MODULE, ?LINE, Index, ElasticQuery1 ]),
     Connection = elasticsearch2:connection(Context),
-    case elasticsearch2_fetch:request(Connection, post, [ Index, <<"_search">> ], QArgs, ElasticQuery1) of
+    case elasticsearch2_fetch:request(Connection, post, [ Index, <<"_search">> ], QArgs, JSON) of
         {ok, Result} ->
             search_result(Result, ElasticQuery1, ZotonicQuery, {From, Size});
         {error, _} ->
