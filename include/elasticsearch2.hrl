@@ -1,7 +1,7 @@
 -record(elasticsearch_put, {
     index :: elasticsearch2:index(),
-    type = <<>> :: binary(),   %% WILL BE REMOVED - for compat with older mod_elasticsearch.
-    id :: elasticsearch2:doc_id()
+    type = <<>> :: binary(),            % <<"resource">> for resources
+    id :: elasticsearch2:doc_id()       % integer for resources, otherwise binary
 }).
 
 -record(elasticsearch_fields, {
