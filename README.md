@@ -162,6 +162,22 @@ observe_elasticsearch_put(#elasticsearch_put{}, Data, Context) ->
     Data.
 ```
 
+Type
+----
+
+In Elastic 5.x a document was associated with a _type_.
+
+This _type_ has been removed in Elastic 7+.
+
+In this library we still use the _type_, it is stored as `es_type` and it set to `resource` for
+all Zotonic resources.
+
+On fetch of a document record the `_source.es_type` is copied to `_type`. This for compatibility with software
+written for Elastic 5.x.
+
+Likewise references to `_type` in queries are mapped to `es_type`.
+
+
 Logging
 -------
 
