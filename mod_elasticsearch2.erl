@@ -152,12 +152,15 @@ init(Context) ->
     z_context:lager_md(Context),
     Index = elasticsearch2:index(Context),
     default_config(index, Index, Context),
-    {ok, _} = prepare_index(Context),
+    gen_server:cast(self(), prepare_index),
     {ok, #state{ context = Context }}.
 
 handle_call(Message, _From, State) ->
     {stop, {unknown_call, Message}, State}.
 
+handle_cast(prepare_index, State = #state{context = Context}) ->
+    {ok, _} = prepare_index(Context),
+    {noreply, State};
 handle_cast({delete_rsc, Id}, State = #state{context = Context}) ->
     elasticsearch2:delete_doc(Id, Context),
     {noreply, State};
