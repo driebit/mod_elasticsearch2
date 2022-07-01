@@ -80,18 +80,20 @@ connection(Context) ->
             }
     end.
 
-%% @doc Get Elasticsearch index name from config; defaults to site name
+%% @doc Get Elasticsearch index name from config; defaults to site name with the environment.
+%% For example: mysite_production
 -spec index(Context) -> Index when
     Context :: z:context(),
     Index :: index().
 index(Context) ->
-    SiteName = z_context:site(Context),
-    IndexName = case m_config:get_value(mod_elasticsearch2, index, Context) of
-        undefined -> SiteName;
-        <<>> -> SiteName;
-        Value -> Value
-    end,
-    z_convert:to_binary(IndexName).
+    case z_convert:to_binary(m_config:get_value(mod_elasticsearch2, index, Context)) of
+        <<>> ->
+            SiteName = z_convert:to_binary(z_context:site(Context)),
+            Environment = z_convert:to_binary(m_site:environment(Context)),
+            <<SiteName/binary, $_, Environment/binary>>;
+        Value ->
+            Value
+    end.
 
 %% Fetch a single document by type and Id
 -spec get_doc( DocId, Context ) -> Result when
