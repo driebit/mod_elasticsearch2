@@ -44,6 +44,8 @@
     observe_search_query/2,
     observe_elasticsearch_put/3,
 
+    event/2,
+
     manage_schema/2,
 
     init/1,
@@ -133,6 +135,17 @@ observe_elasticsearch_put(#elasticsearch_put{ id = RscId }, Data, Context) when 
 observe_elasticsearch_put(_, Data, _) ->
     Data.
 
+
+event(#postback{ message={delete_index, _Args}}, Context) ->
+    case z_acl:is_admin(Context) of
+        true ->
+            delete_recreate_index(Context),
+            z_render:growl(?__("Index has been recreated. Rebuild search indices to fill it.", Context), Context);
+        false ->
+            z_render:growl_error(?__("You need to be an admin to delete the Elastic Search index.", Context), Context)
+    end.
+
+
 manage_schema(_Version, _Context) ->
     #datamodel{
         categories = [
@@ -208,3 +221,10 @@ prepare_index(Context) ->
     {Hash, Mapping} = elasticsearch2_mapping:default_mapping(resource, Context),
     Index = elasticsearch2:index(Context),
     elasticsearch2_index:upgrade(Index, Mapping, Hash, Context).
+
+%% @doc Delete and recreate an empty index.
+-spec delete_recreate_index(z:context()) -> elasticsearch2:result().
+delete_recreate_index(Context) ->
+    {Hash, Mapping} = elasticsearch2_mapping:default_mapping(resource, Context),
+    Index = elasticsearch2:index(Context),
+    elasticsearch2_index:delete_recreate(Index, Mapping, Hash, Context).

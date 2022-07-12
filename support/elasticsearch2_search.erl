@@ -28,7 +28,13 @@
 -include_lib("zotonic.hrl").
 -include_lib("../include/elasticsearch2.hrl").
 
+
+%% @doc Limit the max returned rows to 10K, Elastic does not allow more.
 -define(MAX_ROWS, 9999).
+
+%% Assume that above this amount of rows the estimation of Elastic is not
+%% exact anymore. In the search result the 'is_total_estimated' flag will be set.
+-define(MAX_COUNTED_ROWS, 5000).
 
 %% @doc Convert Zotonic search query to an Elasticsearch query
 -spec search(#search_query{}, z:context()) -> #search_result{} | undefined.
@@ -101,7 +107,9 @@ search(#search_query{search = {query, Query}, offsetlimit = Offset}, Options, Co
             SourceElasticQuery = ElasticQuery#{<<"_source">> => Source},
             Result = do_search(SourceElasticQuery, QArgs, ZotonicQuery, Offset, Context),
             case Source of
-		        false ->
+                false when is_list(Result) ->
+                    Result;
+		        false when is_tuple(Result) ->
 		            Ids = [ m_rsc:rid(RscId, Context) || #{ <<"_id">> := RscId } <- Result#search_result.result ],
 		            Result#search_result{ result = Ids };
 		        _ ->
@@ -290,6 +298,7 @@ search_result(#{
     #search_result{
         result = set_type(Results),
         total = Total,
+        is_total_estimated = Total > ?MAX_COUNTED_ROWS,
         pagelen = Limit,
         pages = Pages,
         page = Page,
