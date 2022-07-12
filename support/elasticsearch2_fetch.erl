@@ -24,6 +24,7 @@
     get/3,
     index/4,
     delete/3,
+    delete_index/2,
     bulk/2
     ]).
 
@@ -143,6 +144,23 @@ delete(Connection, Index, DocId) ->
                                   profile()),
             result(Result, Url)
     end.
+
+%% @doc Delete an index.
+-spec delete_index(Connection, Index) -> Result when
+    Connection :: elasticsearch2:connection(),
+    Index :: elasticsearch2:index(),
+    Result :: elasticsearch2:result().
+delete_index(Connection, Index) ->
+    Path = iolist_to_binary([
+            $/,
+            z_url:url_encode(z_convert:to_binary(Index))]),
+    Url = make_url(Connection, Path, []),
+    Result = httpc:request(delete,
+                          {Url, []},
+                          http_options(),
+                          options(),
+                          profile()),
+    result(Result, Url).
 
 
 %% @doc Bulk index or delete documensts.

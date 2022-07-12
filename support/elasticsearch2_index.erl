@@ -20,6 +20,7 @@
 -module(elasticsearch2_index).
 
 -export([
+    delete_recreate/4,
     upgrade/4,
     ensure_index/2,
     update_mapping/3,
@@ -28,6 +29,26 @@
 ]).
 
 % -include_lib("zotonic.hrl").
+
+
+
+%% @doc Delete the current index and recreate a new empty index.
+-spec delete_recreate(Index, Mapping, Hash, Context) -> Result when
+    Index :: elasticsearch2:index(),
+    Mapping :: map(),
+    Hash :: binary(),
+    Context :: z:context(),
+    Result :: elasticsearch2:result().
+delete_recreate(Index, TypeMappings, Version, Context) ->
+    VersionedIndex = versioned_index(Index, Version),
+    case index_exists(VersionedIndex, Context) of
+        true ->
+            delete_index(VersionedIndex, Context);
+        false ->
+            ok
+    end,
+    upgrade(Index, TypeMappings, Version, Context).
+
 
 %% @doc Upgrade mappings for an index
 %%      This:
@@ -201,6 +222,15 @@ create_index(Index, Mapping, Context) ->
     },
     elasticsearch2_fetch:request(Connection, put, [ Index ], [], Body).
 
+%% @doc Delete Elasticsearch index.
+-spec delete_index(Index, Context) -> Result when
+    Index :: elasticsearch2:index(),
+    Context :: z:context(),
+    Result :: elasticsearch2:result().
+delete_index(Index, Context) ->
+    lager:info("mod_elasticsearch2: deleting index ~s", [Index]),
+    Connection = elasticsearch2:connection(Context),
+    elasticsearch2_fetch:delete_index(Connection, Index).
 
 %% @doc Check if index exists.
 -spec index_exists(binary(), z:context()) -> boolean().
