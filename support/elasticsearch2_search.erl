@@ -153,7 +153,7 @@ build_function_score(Query, Context) ->
     FunctionScore = #{
         <<"query">> => #{
                 <<"bool">> => #{
-                    <<"must">> => lists:filtermap(fun(Q) -> map_query(Q, Context) end, Query),
+                    <<"must">> => lists:flatten( lists:filtermap(fun(Q) -> map_query(Q, Context) end, Query) ),
                     <<"filter">> => build_filter(Query, Context)
                 }
         },
@@ -188,8 +188,8 @@ build_query(Query, {From, Size}, Context) ->
 build_filter(Query, Context) ->
     #{
         <<"bool">> => #{
-            <<"must">> => lists:filtermap(fun(Q) -> map_must(Q, Context) end, Query),
-            <<"must_not">> => lists:filtermap(fun(Q) -> map_must_not(Q, Context) end, Query)
+            <<"must">> => lists:flatten( lists:filtermap(fun(Q) -> map_must(Q, Context) end, Query) ),
+            <<"must_not">> => lists:flatten( lists:filtermap(fun(Q) -> map_must_not(Q, Context) end, Query) )
         }
     }.
 
