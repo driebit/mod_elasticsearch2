@@ -33,8 +33,10 @@
 -define(MAX_ROWS, 9999).
 
 %% Assume that above this amount of rows the estimation of Elastic is not
-%% exact anymore. In the search result the 'is_total_estimated' flag will be set.
--define(MAX_COUNTED_ROWS, 5000).
+%% exact anymore. Elastic also doesn't allow to page past the first 10K results.
+%% Setting the 'is_total_estimated' prevents the pager from displaying page links
+%% that are not reachable.
+-define(MAX_COUNTED_ROWS, 10000).
 
 %% @doc Convert Zotonic search query to an Elasticsearch query
 -spec search(#search_query{}, z:context()) -> #search_result{} | undefined.
@@ -145,6 +147,10 @@ is_elasticsearch_props([{query_context_filter, _} | _]) ->
     true;
 is_elasticsearch_props([{score_function, _} | _]) ->
     true;
+is_elasticsearch_props([{elastic_query, _} | _]) ->
+    true;
+is_elasticsearch_props([{index, _} | _]) ->
+    true;
 is_elasticsearch_props([_Prop | List]) ->
     is_elasticsearch_props(List).
 
@@ -210,14 +216,22 @@ map_score_function(_, _, _) ->
 -spec do_search(map(), list(), proplists:proplist(), {pos_integer(), pos_integer()}, z:context()) -> #search_result{}.
 do_search(ElasticQuery, QArgs, ZotonicQuery, {From, Size}, Context) ->
     ElasticQuery1 = fix_type(fix_aggregation_sort(ElasticQuery)),
+    ElasticQuery2 = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, track_total_hits, true, Context)) of
+        true ->
+            ElasticQuery1#{
+                <<"track_total_hits">> => true
+            };
+        false ->
+            ElasticQuery1
+    end,
     Index = z_convert:to_binary(proplists:get_value(index, ZotonicQuery, elasticsearch2:index(Context))),
-    JSON = jsx:encode(ElasticQuery1),
+    JSON = jsx:encode(ElasticQuery2),
     lager:debug("mod_elasticsearch2 (~s): ~s", [ Index, JSON ]),
-    % io:format("~p:~p: (~s) ~n~p~n~n", [ ?MODULE, ?LINE, Index, ElasticQuery1 ]),
+    % io:format("~p:~p: (~s) ~n~p~n~n", [ ?MODULE, ?LINE, Index, ElasticQuery2 ]),
     Connection = elasticsearch2:connection(Context),
     case elasticsearch2_fetch:request(Connection, post, [ Index, <<"_search">> ], QArgs, JSON) of
         {ok, Result} ->
-            search_result(Result, ElasticQuery1, ZotonicQuery, {From, Size});
+            search_result(Result, ElasticQuery2, ZotonicQuery, {From, Size});
         {error, _} ->
             #search_result{}
     end.
@@ -374,7 +388,7 @@ map_query({text, <<"id:", _/binary>>}, _Context) ->
     false;
 map_query({text, Text}, Context) ->
     DefaultFields = [
-        <<"_all">>,
+        <<"*">>,
         <<"title*^2">>
     ],
     {true, #{<<"simple_query_string">> => #{
