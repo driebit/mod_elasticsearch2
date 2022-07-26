@@ -27,6 +27,13 @@ Or in your site config:
  * `mod_elasticsearch2.host`
  * `mod_elasticsearch2.port`
 
+Elastic search normally doesn't count hits beyond 10K. To enable or disable counting the real
+total number of hits set the config key:
+
+ * `mod_elasticsearch2.track_total_hits`
+
+This config key defaults to `true`.
+
 
 ### Elasticsearch security config
 
@@ -216,3 +223,16 @@ strategy:
 > Each translation is stored in a separate field, which is analyzed according to
 > the language it contains. At query time, the user’s language is used to boost
 > fields in that particular language.
+
+Development and low disk space
+------------------------------
+
+If you happen to be low on disk space then Elastic will become read only.
+
+To disable this, especially on development machines, perform the following two commands:
+
+```shell
+curl -XPUT -H "Content-Type: application/json" http://localhost:9200/_cluster/settings -d '{ "transient": { "cluster.routing.allocation.disk.threshold_enabled": false } }'
+curl -XPUT -H "Content-Type: application/json" http://localhost:9200/_all/_settings -d '{"index.blocks.read_only_allow_delete": null}'
+```
+
