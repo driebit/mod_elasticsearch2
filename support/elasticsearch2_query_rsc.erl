@@ -1,7 +1,7 @@
 %% @author Driebit <tech@driebit.nl>
 %% @copyright 2022 Driebit BV
 %% @doc Support for Zotonic query resources.
-%% @enddoc
+%% @end
 
 %% Copyright 2022 Driebit BV
 %%

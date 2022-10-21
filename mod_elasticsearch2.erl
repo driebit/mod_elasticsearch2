@@ -1,7 +1,7 @@
 %% @author Driebit <tech@driebit.nl>
 %% @copyright 2022 Driebit BV
 %% @doc Zotonic module for using Elasticsearch for full text and other searches.
-%% @enddoc
+%% @end
 
 %% Copyright 2022 Driebit BV
 %%
@@ -29,7 +29,18 @@
 -behaviour(gen_server).
 
 -export([
+    typed_id/2,
+    typed_id_split/1,
+
     start_link/1,
+
+    status/1,
+    flush/1,
+
+    put_doc/3,
+    put_doc/4,
+    delete_doc/2,
+    delete_doc/3,
 
     update_rsc/2,
     delete_rsc/2,
@@ -44,8 +55,6 @@
     observe_search_query/2,
     observe_elasticsearch_put/3,
 
-    event/2,
-
     manage_schema/2,
 
     init/1,
@@ -55,18 +64,121 @@
     terminate/2,
     code_change/3,
 
-    prepare_index/1
+    prepare_index/1,
+    delete_recreate_index/1
 ]).
 
 -include_lib("zotonic.hrl").
 -include("include/elasticsearch2.hrl").
 
--record(state, {context}).
+% Period during which update commands are buffered.
+-define(BULK_DELAY, 1000).
+
+% Max number of batched commands before flush is forced.
+-define(BULK_MAX_BATCH, 500).
+
+
+-record(state, {
+        bulk = [] :: list( elasticsearch2:bulkcmd() ),
+        timer = undefined :: timer:tref() | undefined,
+        bulk_pid = undefined :: undefined | pid(),
+        context :: z:context(),
+        total = 0 :: non_neg_integer(),
+        total_error = 0 :: non_neg_integer(),
+        total_ok = 0 :: non_neg_integer()
+    }).
+
+%% @doc Combine an id and a type into an unique typed id.
+-spec typed_id(elasticsearch2:doc_id(), binary()|string()|undefined) -> binary().
+typed_id(DocId, Type) ->
+    DocId1 = z_convert:to_binary(DocId),
+    case z_convert:to_binary(Type) of
+        <<>> ->
+            DocId1;
+        <<"resource">> ->
+            DocId1;
+        Type1 ->
+            <<DocId1/binary, "::", Type1/binary>>
+    end.
+
+%% @doc Split a typed id in into the type and the document id.
+-spec typed_id_split(binary()) -> {DocId::binary(), Type::binary()}.
+typed_id_split(DocId) ->
+    case binary:split(DocId, <<"::">>) of
+        [ Id, Type ] ->
+            {Id, Type};
+        [ Id ] ->
+            {Id, <<>>}
+    end.
 
 start_link(Args) when is_list(Args) ->
     {context, Context} = proplists:lookup(context, Args),
     gen_server:start_link(?MODULE, z_context:new(Context), []).
 
+%% @doc Return information about the queued updates.
+-spec status(Context) -> {ok, map()} | {error, term()} when
+    Context :: z:context().
+status(Context) ->
+    case z_module_manager:whereis(?MODULE, Context) of
+        {ok, Pid} ->
+            gen_server:call(Pid, status);
+        {error, _} = Error ->
+            Error
+    end.
+
+%% @doc Force a flush of all documents (if no flush is running)
+-spec flush(Context) -> ok | {error, term()} when
+    Context :: z:context().
+flush(Context) ->
+    case z_module_manager:whereis(?MODULE, Context) of
+        {ok, Pid} ->
+            Pid ! bulk_flush,
+            ok;
+        {error, _} = Error ->
+            Error
+    end.
+
+%% @doc Put a document to the default index. The put is batched.
+-spec put_doc(DocId, Doc, Context) -> ok | {error, term()} when
+    DocId :: elasticsearch2:doc_id(),
+    Doc :: map() | binary(),
+    Context :: z:context().
+put_doc(DocId, Doc, Context) ->
+    put_doc(elasticsearch2:index(Context), DocId, Doc, Context).
+
+%% @doc Put a document to the given index. The put is batched.
+-spec put_doc(Index, DocId, Doc, Context) -> ok | {error, term()} when
+    Index :: elasticsearch2:index(),
+    DocId :: elasticsearch2:doc_id(),
+    Doc :: map() | binary(),
+    Context :: z:context().
+put_doc(Index, DocId, Doc, Context) ->
+    case z_module_manager:whereis(?MODULE, Context) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, {put_doc, Index, DocId, Doc});
+        {error, _} = Error ->
+            Error
+    end.
+
+%% @doc Delete a document from the default index. The put is batched.
+-spec delete_doc(DocId, Context) -> ok | {error, term()} when
+    DocId :: elasticsearch2:doc_id(),
+    Context :: z:context().
+delete_doc(DocId, Context) ->
+    delete_doc(elasticsearch2:index(Context), DocId, Context).
+
+%% @doc Delete a document from the given index. The put is batched.
+-spec delete_doc(Index, DocId, Context) -> ok | {error, term()} when
+    Index :: elasticsearch2:index(),
+    DocId :: elasticsearch2:doc_id(),
+    Context :: z:context().
+delete_doc(Index, DocId, Context) ->
+    case z_module_manager:whereis(?MODULE, Context) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, {delete_doc, Index, DocId});
+        {error, _} = Error ->
+            Error
+    end.
 
 %% @doc Update a resource in the elastic search index.
 -spec update_rsc( m_rsc:resource_id(), z:context() ) -> ok | {error, term()}.
@@ -135,17 +247,6 @@ observe_elasticsearch_put(#elasticsearch_put{ id = RscId }, Data, Context) when 
 observe_elasticsearch_put(_, Data, _) ->
     Data.
 
-
-event(#postback{ message={delete_index, _Args}}, Context) ->
-    case z_acl:is_admin(Context) of
-        true ->
-            delete_recreate_index(Context),
-            z_render:growl(?__("Index has been recreated. Rebuild search indices to fill it.", Context), Context);
-        false ->
-            z_render:growl_error(?__("You need to be an admin to delete the Elastic Search index.", Context), Context)
-    end.
-
-
 manage_schema(_Version, _Context) ->
     #datamodel{
         categories = [
@@ -168,21 +269,84 @@ init(Context) ->
     gen_server:cast(self(), prepare_index),
     {ok, #state{ context = Context }}.
 
+handle_call(status, _From, State) ->
+    Status = #{
+        queue_count => length(State#state.bulk),
+        timer => State#state.timer,
+        bulk_pid => State#state.bulk_pid,
+        total => State#state.total,
+        total_ok => State#state.total_ok,
+        total_error => State#state.total_error
+    },
+    {reply, {ok, Status}, State};
 handle_call(Message, _From, State) ->
     {stop, {unknown_call, Message}, State}.
 
 handle_cast(prepare_index, State = #state{context = Context}) ->
     {ok, _} = prepare_index(Context),
     {noreply, State};
-handle_cast({delete_rsc, Id}, State = #state{context = Context}) ->
-    elasticsearch2:delete_doc(Id, Context),
-    {noreply, State};
-handle_cast({update_rsc, Id}, State = #state{context = Context}) ->
-    elasticsearch2:put_doc(Id, Context),
-    {noreply, State};
+
+handle_cast({delete_rsc, RscId}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+    {ok, DeleteCmd} = elasticsearch2:delete_bulkcmd(RscId, Context),
+    Bulk1 = [ DeleteCmd | Bulk ],
+    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total + 1 })};
+handle_cast({update_rsc, RscId}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+    {Bulk1, Total1} = case elasticsearch2:put_bulkcmd(RscId, Context) of
+        {ok, PutCmd} ->
+            {[ PutCmd | Bulk ], Total + 1};
+        {error, _} ->
+            {Bulk, Total}
+    end,
+    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total1 })};
+
+handle_cast({delete_doc, Index, DocId}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+    {ok, DeleteCmd} = elasticsearch2:delete_bulkcmd(Index, DocId, Context),
+    Bulk1 = [ DeleteCmd | Bulk ],
+    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total + 1 })};
+
+handle_cast({put_doc, Index, DocId, Doc}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+    {ok, PutCmd} = elasticsearch2:put_bulkcmd(Index, DocId, Doc, Context),
+    Bulk1 = [ PutCmd | Bulk ],
+    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total + 1 })};
+
 handle_cast(Msg, State) ->
     {stop, {unknown_cast, Msg}, State}.
 
+handle_info(bulk_flush, #state{ bulk = [], timer = Timer } = State) when Timer =/= undefined ->
+    timer:cancel(Timer),
+    {noreply, State#state{ timer = undefined }};
+handle_info(bulk_flush, #state{ bulk = [] } = State) ->
+    {noreply, State#state{ timer = undefined }};
+handle_info(bulk_flush, #state{ context = Context, timer = Timer, bulk_pid = undefined, bulk = Bulk } = State) ->
+    timer:cancel(Timer),
+    {Batch, Remaining} = take(?BULK_MAX_BATCH, Bulk, []),
+    Connection = elasticsearch2:connection(Context),
+    lager:info("mod_elasticsearch2: processing batch of ~p items (~p more queued)",
+               [ length(Batch), length(Remaining) ]),
+    Self = self(),
+    Pid = erlang:spawn(
+        fun() ->
+            Result = elasticsearch2_fetch:bulk(Connection, Batch),
+            Self ! {bulk_result, Result}
+        end),
+    erlang:monitor(process, Pid),
+    erlang:garbage_collect(),
+    {noreply, State#state{ bulk_pid = Pid, bulk = Remaining, timer = undefined }};
+handle_info({'DOWN', _MRef, process, Pid, normal}, #state{ bulk_pid = Pid } = State) ->
+    State1 = State#state{ bulk_pid = undefined },
+    {noreply, schedule_flush(State1)};
+handle_info({'DOWN', _MRef, process, Pid, Reason}, #state{ bulk_pid = Pid } = State) ->
+    % TODO: add backoff and retry
+    lager:error("mod_elasticsearch2: bulk process is down with ~p", [ Reason ]),
+    State1 = State#state{ bulk_pid = undefined },
+    {noreply, schedule_flush(State1)};
+handle_info({bulk_result, {error, Reason}}, State) ->
+    % TODO: add backoff and retry
+    lager:error("mod_elasticsearch2: error return from bulk insert: ~p", [ Reason ]),
+    {noreply, State};
+handle_info({bulk_result, {ok, Result}}, #state{ context = Context, total_ok = TotalOk, total_error = TotalErr } = State) ->
+    {Ok, Err} = handle_bulk_result(Result, Context),
+    {noreply, State#state{ total_ok = TotalOk + Ok, total_error = TotalErr + Err}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -193,6 +357,13 @@ terminate(_Reason, _State) ->
     ok.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%% private functions %%%%%%%%%%%%%%%%%%%%%%%%%%
+
+take(0, L, Acc) ->
+    {Acc, L};
+take(_N, [], Acc) ->
+    {Acc, []};
+take(N, [H|L], Acc) ->
+    take(N-1, L, [H|Acc]).
 
 
 %% @doc Only handle 'elastic' and 'query' search types
@@ -228,3 +399,74 @@ delete_recreate_index(Context) ->
     {Hash, Mapping} = elasticsearch2_mapping:default_mapping(resource, Context),
     Index = elasticsearch2:index(Context),
     elasticsearch2_index:delete_recreate(Index, Mapping, Hash, Context).
+
+schedule_flush(#state{ timer = Timer, bulk_pid = BulkPid, bulk = [_|_] = Bulk} = State) ->
+    case length(Bulk) >= ?BULK_MAX_BATCH of
+        true when BulkPid =:= undefined ->
+            self() ! bulk_flush,
+            State;
+        true ->
+            State;
+        false when Timer =:= undefined ->
+            {ok, TRef} = timer:send_after(?BULK_DELAY, bulk_flush),
+            State#state{ timer = TRef };
+        false ->
+            State
+    end;
+schedule_flush(#state{ bulk = [], timer = Timer } = State) when Timer =/= undefined ->
+    timer:cancel(Timer),
+    State#state{ timer = undefined };
+schedule_flush(#state{} = State) ->
+    State.
+
+handle_bulk_result(#{ <<"items">> := Items, <<"errors">> := IsErrors }, Context) ->
+    lists:foreach(
+        fun(Doc) ->
+            handle_single_result(Doc, Context)
+        end,
+        Items),
+    Count = length(Items),
+    case IsErrors of
+        true ->
+            ErrorItems = lists:filter(
+                fun
+                    (#{ <<"index">> := #{ <<"status">> := 200 } }) -> false;
+                    (#{ <<"index">> := #{ <<"status">> := 201 } }) -> false;
+                    (_) -> true
+                end,
+                Items),
+            % io:format("~p", [ ErrorItems ]),
+            lager:error("mod_elasticsearch2: bulk documents could not be indexed: ~p", [ErrorItems]),
+            ErrCount = length(ErrorItems),
+            {Count - ErrCount, ErrCount};
+        false ->
+            lager:debug("mod_elasticsearch2: bulk documents ok (~p items)", [ Count ]),
+            {Count, 0}
+    end.
+
+handle_single_result(#{ <<"delete">> := #{
+        <<"_id">> := DocId,
+        <<"_index">> := Index,
+        <<"status">> := Status
+    } = Res }, Context) ->
+    z_notifier:notify(#elasticsearch_bulk_result{
+            action = delete,
+            doc_id = DocId,
+            index = elasticsearch2_index:drop_index_hash(Index),
+            result = maps:get(<<"result">>, Res, undefined),
+            status = Status,
+            error = maps:get(<<"error">>, Res, undefined)
+        }, Context);
+handle_single_result(#{ <<"index">> := #{
+        <<"_id">> := DocId,
+        <<"_index">> := Index,
+        <<"status">> := Status
+    } = Res }, Context) ->
+    z_notifier:notify(#elasticsearch_bulk_result{
+            action = put,
+            doc_id = DocId,
+            index = elasticsearch2_index:drop_index_hash(Index),
+            result = maps:get(<<"result">>, Res, undefined),
+            status = Status,
+            error = maps:get(<<"error">>, Res, undefined)
+        }, Context).

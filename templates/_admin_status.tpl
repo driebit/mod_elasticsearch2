@@ -1,6 +1,6 @@
 <div class="form-group">
     <div>
-        {% button class="btn btn-default" text=_"Delete Elastic Search page index"
+        {% button class="btn btn-default" text=_"Delete Elastic Search page index..."
             action={confirm text=[
                                 _"Are you sure you want to delete the Elastic Search index?",
                                 "<br><br>",

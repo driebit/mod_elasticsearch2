@@ -1,7 +1,7 @@
 %% @author Driebit <tech@driebit.nl>
 %% @copyright 2022 Driebit BV
 %% @doc Manages Elasticsearch indexes and index mappings
-%% @enddoc
+%% @end
 
 %% Copyright 2022 Driebit BV
 %%
@@ -25,12 +25,9 @@
     ensure_index/2,
     update_mapping/3,
     find_aliased_index/2,
-    copy_to_new_index/3
+    copy_to_new_index/3,
+    drop_index_hash/1
 ]).
-
-% -include_lib("zotonic.hrl").
-
-
 
 %% @doc Delete the current index and recreate a new empty index.
 -spec delete_recreate(Index, Mapping, Hash, Context) -> Result when
@@ -39,7 +36,7 @@
     Hash :: binary(),
     Context :: z:context(),
     Result :: elasticsearch2:result().
-delete_recreate(Index, TypeMappings, Version, Context) ->
+delete_recreate(Index, Mapping, Version, Context) when is_map(Mapping) ->
     VersionedIndex = versioned_index(Index, Version),
     case index_exists(VersionedIndex, Context) of
         true ->
@@ -47,7 +44,7 @@ delete_recreate(Index, TypeMappings, Version, Context) ->
         false ->
             ok
     end,
-    upgrade(Index, TypeMappings, Version, Context).
+    upgrade(Index, Mapping, Version, Context).
 
 
 %% @doc Upgrade mappings for an index
@@ -78,9 +75,8 @@ copy_to_new_index(Index, VersionedIndex, Context) ->
     PrevVersionedIndex = find_aliased_index(Index, Context),
     maybe_reindex(Index, VersionedIndex, Context),
     Result = update_alias(Index, VersionedIndex, PrevVersionedIndex, Context),
-    maybe_drop_index(PrevVersionedIndex, Context),
+    delete_index(PrevVersionedIndex, Context),
     Result.
-
 
 %% Create index only if it doesn't yet exist
 -spec ensure_index(elasticsearch2:index(), z:context()) -> elasticsearch2:result().
@@ -130,13 +126,6 @@ maybe_reindex(Alias, NewIndex, Context) ->
             Connection = elasticsearch2:connection(Context),
             elasticsearch2_fetch:request(Connection, post, [ <<"_reindex">> ], [], Body)
     end.
-
-%% @doc Maybe drop an old index.
-maybe_drop_index(undefined, _Context) ->
-    ok;
-maybe_drop_index(Index, Context) ->
-    Connection = elasticsearch2:connection(Context),
-    elasticsearch2_fetch:request(Connection, delete, [ Index ], [], <<>>).
 
 %% @doc Point index alias (e.g. sitename) to versioned index (e.g. sitename_af578ebcdf)
 -spec update_alias(Alias, VersionedIndex, PrevVersionedIndex, Context) -> Result when
@@ -224,9 +213,11 @@ create_index(Index, Mapping, Context) ->
 
 %% @doc Delete Elasticsearch index.
 -spec delete_index(Index, Context) -> Result when
-    Index :: elasticsearch2:index(),
+    Index :: undefined | elasticsearch2:index(),
     Context :: z:context(),
     Result :: elasticsearch2:result().
+delete_index(undefined, _Context) ->
+    {ok, #{}};
 delete_index(Index, Context) ->
     lager:info("mod_elasticsearch2: deleting index ~s", [Index]),
     Connection = elasticsearch2:connection(Context),
@@ -237,7 +228,6 @@ delete_index(Index, Context) ->
 index_exists(Index, Context) ->
     url_exists([ Index ], Context).
 
-
 url_exists(Path, Context) ->
     Connection = elasticsearch2:connection(Context),
     case elasticsearch2_fetch:request(Connection, head, Path, [], <<>>) of
@@ -246,3 +236,34 @@ url_exists(Path, Context) ->
         {error, _} ->
             false
     end.
+
+%% @doc Check the index name, optionally drop the hash of the mapping from
+%% the index name.
+-spec drop_index_hash(Index) -> Index1 when
+    Index :: binary(),
+    Index1 :: binary().
+drop_index_hash(Index) ->
+    case binary:split(Index, <<"_">>, [ global ]) of
+        [_] ->
+            Index;
+        Parts ->
+            Hash = lists:last(Parts),
+            case is_hash(Hash) of
+                true ->
+                    I1 = lists:reverse(tl(lists:reverse(Parts))),
+                    iolist_to_binary(lists:join($_, I1));
+                false ->
+                    Index
+            end
+    end.
+
+is_hash(Hash) when size(Hash) =:= 40 ->
+    L = binary_to_list(Hash),
+    lists:all(
+        fun(C) ->
+                   (C >= $0 andalso C =< $9)
+            orelse (C >= $a andalso C =< $f)
+        end,
+        L);
+is_hash(_) ->
+    false.
