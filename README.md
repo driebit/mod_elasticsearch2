@@ -131,7 +131,7 @@ z_search:search(
 Buffered put/delete
 -------------------
 
-Use the `mod_elasticsearch:put_doc` and `mod_elasticsearch2:delete_doc` routines to perform bulk put and delete requests.
+Use the `mod_elasticsearch2:put_doc` and `mod_elasticsearch2:delete_doc` routines to perform bulk put and delete requests.
 
 The requests are buffered for one second, or 500 commands, whatever comes first.
 
