@@ -148,21 +148,6 @@ After a command has been executed the following notification is emitted:
 }).
 ```
 
-Types and document ids
-----------------------
-
-ES7+ does not support document types. As the document types are often used to distinguish ids between sources (for example Adlib databases) there are routines to combine the type and id:
-
-```erlang
-DocId = mod_elasticsearch2:typed_id(Id, Type),
-{Id, Type} = mod_elasticsearch2:type_id_split(DocId)
-```
-
-The empty type and the `resource` type are not appended to the document id.
-
-The `_type` field is simulated in the library, the type itself should be stored in the `es_type` field of the stored document.
-
-
 Notifications
 -------------
 
@@ -229,6 +214,15 @@ On fetch of a document record the `_source.es_type` is copied to `_type`. This f
 written for Elastic 5.x.
 
 Likewise references to `_type` in queries are mapped to `es_type`.
+
+As the document types are often used to distinguish ids between sources (for example Adlib databases) there are routines to combine the type and id:
+
+```erlang
+DocId = mod_elasticsearch2:typed_id(Id, Type),
+{Id, Type} = mod_elasticsearch2:type_id_split(DocId)
+```
+
+The empty type and the `resource` type are not appended to the document id.
 
 
 Logging
