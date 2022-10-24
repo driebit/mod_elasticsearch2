@@ -79,11 +79,11 @@
 
 
 -record(state, {
-        bulk = [] :: list( elasticsearch2:bulkcmd() ),
+        queue :: queue:queue( elasticsearch2:bulkcmd() ),
         timer = undefined :: timer:tref() | undefined,
         bulk_pid = undefined :: undefined | pid(),
         context :: z:context(),
-        total = 0 :: non_neg_integer(),
+        total_received = 0 :: non_neg_integer(),
         total_error = 0 :: non_neg_integer(),
         total_ok = 0 :: non_neg_integer()
     }).
@@ -267,14 +267,17 @@ init(Context) ->
     Index = elasticsearch2:index(Context),
     default_config(index, Index, Context),
     gen_server:cast(self(), prepare_index),
-    {ok, #state{ context = Context }}.
+    {ok, #state{
+        queue = queue:new(),
+        context = Context
+    }}.
 
 handle_call(status, _From, State) ->
     Status = #{
-        queue_count => length(State#state.bulk),
+        queue_count => queue:len(State#state.queue),
         timer => State#state.timer,
         bulk_pid => State#state.bulk_pid,
-        total => State#state.total,
+        total_received => State#state.total_received,
         total_ok => State#state.total_ok,
         total_error => State#state.total_error
     },
@@ -286,52 +289,56 @@ handle_cast(prepare_index, State = #state{context = Context}) ->
     {ok, _} = prepare_index(Context),
     {noreply, State};
 
-handle_cast({delete_rsc, RscId}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+handle_cast({delete_rsc, RscId}, State = #state{ context = Context, queue = Queue, total_received = Total }) ->
     {ok, DeleteCmd} = elasticsearch2:delete_bulkcmd(RscId, Context),
-    Bulk1 = [ DeleteCmd | Bulk ],
-    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total + 1 })};
-handle_cast({update_rsc, RscId}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
-    {Bulk1, Total1} = case elasticsearch2:put_bulkcmd(RscId, Context) of
+    Q1 = queue:in(DeleteCmd, Queue),
+    {noreply, schedule_flush(State#state{ queue = Q1, total_received = Total + 1 })};
+handle_cast({update_rsc, RscId}, State = #state{ context = Context, queue = Queue, total_received = Total }) ->
+    {Q1, Total1} = case elasticsearch2:put_bulkcmd(RscId, Context) of
         {ok, PutCmd} ->
-            {[ PutCmd | Bulk ], Total + 1};
+            {queue:in(PutCmd, Queue), Total + 1};
         {error, _} ->
-            {Bulk, Total}
+            {Queue, Total}
     end,
-    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total1 })};
+    {noreply, schedule_flush(State#state{ queue = Q1, total_received = Total1 })};
 
-handle_cast({delete_doc, Index, DocId}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+handle_cast({delete_doc, Index, DocId}, State = #state{ context = Context, queue = Queue, total_received = Total }) ->
     {ok, DeleteCmd} = elasticsearch2:delete_bulkcmd(Index, DocId, Context),
-    Bulk1 = [ DeleteCmd | Bulk ],
-    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total + 1 })};
+    Q1 = queue:in(DeleteCmd, Queue),
+    {noreply, schedule_flush(State#state{ queue = Q1, total_received = Total + 1 })};
 
-handle_cast({put_doc, Index, DocId, Doc}, State = #state{ context = Context, bulk = Bulk, total = Total }) ->
+handle_cast({put_doc, Index, DocId, Doc}, State = #state{ context = Context, queue = Queue, total_received = Total }) ->
     {ok, PutCmd} = elasticsearch2:put_bulkcmd(Index, DocId, Doc, Context),
-    Bulk1 = [ PutCmd | Bulk ],
-    {noreply, schedule_flush(State#state{ bulk = Bulk1, total = Total + 1 })};
+    Q1 = queue:in(PutCmd, Queue),
+    {noreply, schedule_flush(State#state{ queue = Q1, total_received = Total + 1 })};
 
 handle_cast(Msg, State) ->
     {stop, {unknown_cast, Msg}, State}.
 
-handle_info(bulk_flush, #state{ bulk = [], timer = Timer } = State) when Timer =/= undefined ->
-    timer:cancel(Timer),
-    {noreply, State#state{ timer = undefined }};
-handle_info(bulk_flush, #state{ bulk = [] } = State) ->
-    {noreply, State#state{ timer = undefined }};
-handle_info(bulk_flush, #state{ context = Context, timer = Timer, bulk_pid = undefined, bulk = Bulk } = State) ->
-    timer:cancel(Timer),
-    {Batch, Remaining} = take(?BULK_MAX_BATCH, Bulk, []),
-    Connection = elasticsearch2:connection(Context),
-    lager:info("mod_elasticsearch2: processing batch of ~p items (~p more queued)",
-               [ length(Batch), length(Remaining) ]),
-    Self = self(),
-    Pid = erlang:spawn(
-        fun() ->
-            Result = elasticsearch2_fetch:bulk(Connection, Batch),
-            Self ! {bulk_result, Result}
-        end),
-    erlang:monitor(process, Pid),
-    erlang:garbage_collect(),
-    {noreply, State#state{ bulk_pid = Pid, bulk = Remaining, timer = undefined }};
+handle_info(bulk_flush, #state{ context = Context, timer = Timer, bulk_pid = undefined, queue = Queue } = State) ->
+    State1 = case queue:is_empty(Queue) of
+        false ->
+            timer:cancel(Timer),
+            {Batch, Remaining} = take(?BULK_MAX_BATCH, Queue, []),
+            Connection = elasticsearch2:connection(Context),
+            lager:info("mod_elasticsearch2: processing batch of ~p items (~p more queued)",
+                       [ length(Batch), queue:len(Remaining) ]),
+            Self = self(),
+            Pid = erlang:spawn(
+                fun() ->
+                    Result = elasticsearch2_fetch:bulk(Connection, Batch),
+                    Self ! {bulk_result, Result}
+                end),
+            erlang:monitor(process, Pid),
+            erlang:garbage_collect(),
+            State#state{ bulk_pid = Pid, queue = Remaining, timer = undefined };
+        true when Timer =/= undefined ->
+            timer:cancel(Timer),
+            State#state{ timer = undefined };
+        true ->
+            State
+    end,
+    {noreply, State1};
 handle_info({'DOWN', _MRef, process, Pid, normal}, #state{ bulk_pid = Pid } = State) ->
     State1 = State#state{ bulk_pid = undefined },
     {noreply, schedule_flush(State1)};
@@ -358,13 +365,15 @@ terminate(_Reason, _State) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%% private functions %%%%%%%%%%%%%%%%%%%%%%%%%%
 
-take(0, L, Acc) ->
-    {Acc, L};
-take(_N, [], Acc) ->
-    {Acc, []};
-take(N, [H|L], Acc) ->
-    take(N-1, L, [H|Acc]).
-
+take(0, Q, Acc) ->
+    {lists:reverse(Acc), Q};
+take(N, Q, Acc) ->
+    case queue:out(Q) of
+        {empty, Q1} ->
+            {lists:reverse(Acc), Q1};
+        {{value, H}, Q1} ->
+            take(N-1, Q1, [H|Acc])
+    end.
 
 %% @doc Only handle 'elastic' and 'query' search types
 search(#search_query{search = {elastic, _Query}} = Search, Context) ->
@@ -400,24 +409,27 @@ delete_recreate_index(Context) ->
     Index = elasticsearch2:index(Context),
     elasticsearch2_index:delete_recreate(Index, Mapping, Hash, Context).
 
-schedule_flush(#state{ timer = Timer, bulk_pid = BulkPid, bulk = [_|_] = Bulk} = State) ->
-    case length(Bulk) >= ?BULK_MAX_BATCH of
-        true when BulkPid =:= undefined ->
-            self() ! bulk_flush,
-            State;
-        true ->
-            State;
-        false when Timer =:= undefined ->
-            {ok, TRef} = timer:send_after(?BULK_DELAY, bulk_flush),
-            State#state{ timer = TRef };
+schedule_flush(#state{ timer = Timer, bulk_pid = BulkPid, queue = Queue} = State) ->
+    case queue:is_empty(Queue) of
         false ->
+            case queue:len(Queue) >= ?BULK_MAX_BATCH of
+                true when BulkPid =:= undefined ->
+                    self() ! bulk_flush,
+                    State;
+                true ->
+                    State;
+                false when Timer =:= undefined ->
+                    {ok, TRef} = timer:send_after(?BULK_DELAY, bulk_flush),
+                    State#state{ timer = TRef };
+                false ->
+                    State
+            end;
+        true when Timer =/= undefined ->
+            timer:cancel(Timer),
+            State#state{ timer = undefined };
+        true ->
             State
-    end;
-schedule_flush(#state{ bulk = [], timer = Timer } = State) when Timer =/= undefined ->
-    timer:cancel(Timer),
-    State#state{ timer = undefined };
-schedule_flush(#state{} = State) ->
-    State.
+    end.
 
 handle_bulk_result(#{ <<"items">> := Items, <<"errors">> := IsErrors }, Context) ->
     lists:foreach(
