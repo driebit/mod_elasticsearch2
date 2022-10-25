@@ -1,7 +1,7 @@
 %% @author Driebit <tech@driebit.nl>
 %% @copyright 2022 Driebit BV
 %% @doc HTTP interface to Elastic, low level functions.
-%% @enddoc
+%% @end
 
 %% Copyright 2022 Driebit BV
 %%
@@ -169,7 +169,7 @@ delete_index(Connection, Index) ->
     Commands :: elasticsearch2:bulkcmd(),
     Result :: elasticsearch2:result().
 bulk(Connection, Bulk) ->
-    Url = make_url(Connection, <<"_bulk">>, []),
+    Url = make_url(Connection, <<"/_bulk">>, []),
     Commands = lists:map(fun bulkcmd/1, Bulk),
     Lines = lists:map(fun jsx:encode/1, lists:flatten(Commands)),
     Body = [ [ Line, 10 ] || Line <- Lines ],
@@ -227,14 +227,18 @@ result({ok, {{_Http, 200, _Reason}, _Hs, <<>>}}, _Url) ->
     {ok, #{}};
 result({ok, {{_Http, 200, _Reason}, _Hs, Body}}, _Url) ->
     {ok, jsx:decode(Body)};
+result({ok, {{_Http, 404, _Reason}, _Hs, _}}, Url) ->
+    lager:debug("Error on Elastic request ~s, http ~p", [ Url, 404 ]),
+    {error, enoent};
+result({ok, {{_Http, 410, _Reason}, _Hs, _}}, Url) ->
+    lager:debug("Error on Elastic request ~s, http ~p", [ Url, 404 ]),
+    {error, enoent};
 result({ok, {{_Http, Code, _Reason}, _Hs, Body}}, Url) ->
     lager:error("Error on Elastic request ~s, http ~p: ~s", [ Url, Code, Body ]),
     case Code of
         400 -> {error, request};
         401 -> {error, eacces};
         403 -> {error, eacces};
-        404 -> {error, enoent};
-        410 -> {error, enoent};
         500 -> {error, internal};
         503 -> {error, overload};
         527 -> {error, ratelimit};

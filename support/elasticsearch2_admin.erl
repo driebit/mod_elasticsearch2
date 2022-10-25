@@ -1,7 +1,7 @@
 %% @author Driebit <tech@driebit.nl>
 %% @copyright 2022 Driebit BV
 %% @doc Support function for the admin search query panel.
-%% @enddoc
+%% @end
 
 %% Copyright 2022 Driebit BV
 %%
@@ -43,4 +43,12 @@ event(#postback{message={elastic_query_preview, Opts}}, Context) ->
             S = z_search:search({QueryType, [{elastic_query, Q}, {index, Index}]}, Context),
             {Html, Context1} = z_template:render_to_iolist({cat, "_admin_query_preview.tpl"}, [{result,S}, {id, Id}], Context),
             z_render:update(DivId, Html, Context1)
+    end;
+event(#postback{ message={delete_index, _Args}}, Context) ->
+    case z_acl:is_admin(Context) of
+        true ->
+            mod_elasticsearch2:delete_recreate_index(Context),
+            z_render:growl(?__("Index has been recreated. Rebuild search indices to fill it.", Context), Context);
+        false ->
+            z_render:growl_error(?__("You need to be an admin to delete the Elastic Search index.", Context), Context)
     end.

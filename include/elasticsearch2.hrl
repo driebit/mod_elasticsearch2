@@ -13,3 +13,15 @@
 -record(elasticsearch_options, {
     fallback = true :: boolean()
 }).
+
+
+%% Event sent after a bulk update or delete has been done.
+%% The error is set to 'undefined' for successful updates.
+-record(elasticsearch_bulk_result, {
+    action :: put | delete,
+    doc_id :: binary(),
+    index :: binary(),
+    result :: binary(),
+    status :: 100..500,
+    error :: map() | undefined
+}).

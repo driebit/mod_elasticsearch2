@@ -1,7 +1,7 @@
 %% @author Driebit <tech@driebit.nl>
 %% @copyright 2022 Driebit BV
 %% @doc Map resources to Elastic Search documents.
-%% @enddoc
+%% @end
 
 %% Copyright 2022 Driebit BV
 %%
