@@ -135,6 +135,7 @@ maybe_reindex(Alias, NewIndex, Context) ->
     Context :: z:context(),
     Result :: elasticsearch2:result().
 update_alias(Alias, VersionedIndex, undefined, Context) ->
+    delete_index(Alias, Context),
     Body = #{
         <<"actions">> => [
             #{
