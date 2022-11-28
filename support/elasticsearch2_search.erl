@@ -186,7 +186,7 @@ build_query(Query, {From, Size}, Context) ->
     QArgs = [
         {<<"from">>, From - 1}, % Zotonic starts 'offset' at 1, Elasticsearch 'from' at 0.
         {<<"size">>, Size},
-        {<<"sort">>, z_utils:combine($,, lists:filtermap(fun(Q) -> map_sort(Q, Context) end, Query))}
+        {<<"sort">>, z_utils:combine($,, map_sorts(Query))}
     ],
     {Body, QArgs}.
 
@@ -349,33 +349,41 @@ source(Query, Default) ->
             [z_convert:to_binary(Field) || Field <- Fields]
     end.
 
+%% @doc Map all sort terms keep asort, sort, zsort order
+map_sorts(Query) ->
+    lists:flatten(
+           lists:filtermap(fun(Q) -> map_sort(asort, Q) end, Query)
+        ++ lists:filtermap(fun(Q) -> map_sort(sort, Q) end, Query)
+        ++ lists:filtermap(fun(Q) -> map_sort(zsort, Q) end, Query)
+    ).
+
 %% @doc Map sort query arguments.
 %%      Return false to ignore the query argument.
-map_sort({sort, Property}, Context) when is_atom(Property) or is_list(Property) ->
-    map_sort({sort, z_convert:to_binary(Property)}, Context);
-map_sort({sort, <<"random">>}, _Context) ->
+map_sort(Key, {Key, Property}) when is_atom(Property); is_list(Property) ->
+    map_sort(Key, {Key, z_convert:to_binary(Property)});
+map_sort(Key, {Key, <<"random">>}) ->
     false;
-map_sort({sort, Seq}, _Context) when Seq =:= <<"seq">>; Seq =:= <<"+seq">>; Seq =:= <<"-seq">>; Seq =:= <<>>  ->
+map_sort(Key, {Key, Seq}) when Seq =:= <<"seq">>; Seq =:= <<"+seq">>; Seq =:= <<"-seq">>; Seq =:= <<>>  ->
     %% Ignore sort by seq: edges are (by default) indexed in order of seq
     false;
-map_sort({sort, <<"-", Property/binary>>}, Context) ->
-    map_sort(Property, <<"desc">>, Context);
-map_sort({sort, <<"+", Property/binary>>}, Context) ->
-    map_sort(Property, <<"asc">>, Context);
-map_sort({match_objects, _Id}, _Context) ->
+map_sort(Key, {Key, <<"-", Property/binary>>}) ->
+    map_sort_1(Property, <<"desc">>);
+map_sort(Key, {Key, <<"+", Property/binary>>}) ->
+    map_sort_1(Property, <<"asc">>);
+map_sort(sort, {match_objects, _Id}) ->
     %% Sort a match_objects }by date
     {true, [
         <<"_score">>, %% Primary sort on score
-        $,,
-        <<"modified:desc">>
+        #{<<"modified">> => <<"desc">>}
+
     ]};
-map_sort({sort, Property}, Context) ->
-    map_sort(Property, <<"asc">>, Context);
+map_sort(Key, {Key, Property}) ->
+    map_sort_1(Property, <<"asc">>);
 map_sort(_, _) ->
     false.
 
-map_sort(Property, Order, _Context) ->
-    {true, [ map_sort_property(Property), $:, Order ]}.
+map_sort_1(Property, Order) ->
+    {true, iolist_to_binary([map_sort_property(Property), $:, Order])}.
 
 %% @doc Map full text query
 -spec map_query({atom(), any()}, z:context()) -> {true, list()} | false.
