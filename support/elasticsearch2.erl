@@ -126,11 +126,11 @@ get_doc(Index, DocId, Context) ->
             % Set the "_type" field from the 'es_type' source field. This is for compatiblity
             % with templates that expect the _type field to be set. An example is mod_ginger_collection
             % where the _type field is used to store the database name.
-            Doc#{
+            {ok, Doc#{
                 <<"_type">> => maps:get(<<"es_type">>, Source, <<>>)
-            };
+            }};
         {ok, Doc} ->
-            Doc;
+            {ok, Doc};
         {error, _} = Error ->
             Error
     end.
@@ -229,8 +229,10 @@ put_bulkcmd(Index, RscId, Context) ->
     Doc :: map() | binary(),
     Context :: z:context(),
     Result :: {ok, bulkcmd()}.
-put_bulkcmd(Index, DocId, Doc, _Context) ->
-    {ok, {index, Index, DocId, Doc}}.
+put_bulkcmd(Index, DocId, Doc, Context) ->
+    Type = maps:get(<<"es_type">>, Doc, maps:get(es_type, Doc, <<>>)),
+    Doc1 = z_notifier:foldl(#elasticsearch_put{ index = Index, type = Type, id = DocId }, Doc, Context),
+    {ok, {index, Index, DocId, Doc1}}.
 
 %% @doc Map a resource delete to a bulk command on the default index.
 -spec delete_bulkcmd(DocId, Context) -> {ok, bulkcmd()} when
