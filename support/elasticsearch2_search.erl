@@ -111,9 +111,20 @@ search(#search_query{search = {query, Query}, offsetlimit = Offset}, Options, Co
             case Source of
                 false when is_list(Result) ->
                     Result;
+                false when is_tuple(Result), Options#elasticsearch_options.return_score ->
+                    Ids = lists:map(
+                        fun(#{ <<"_id">> := RscId, <<"_score">> := Score }) ->
+                            {m_rsc:rid(RscId, Context), Score}
+                        end,
+                        Result#search_result.result),
+                    Result#search_result{ result = Ids };
 		        false when is_tuple(Result) ->
-		            Ids = [ m_rsc:rid(RscId, Context) || #{ <<"_id">> := RscId } <- Result#search_result.result ],
-		            Result#search_result{ result = Ids };
+                    Ids = lists:map(
+                        fun(#{ <<"_id">> := RscId }) ->
+                            m_rsc:rid(RscId, Context)
+                        end,
+                        Result#search_result.result),
+                    Result#search_result{ result = Ids };
 		        _ ->
                     Result
     	    end;
@@ -150,6 +161,8 @@ is_elasticsearch_props([{score_function, _} | _]) ->
 is_elasticsearch_props([{elastic_query, _} | _]) ->
     true;
 is_elasticsearch_props([{index, _} | _]) ->
+    true;
+is_elasticsearch_props([{match_objects, _} | _]) ->
     true;
 is_elasticsearch_props([_Prop | List]) ->
     is_elasticsearch_props(List).
@@ -383,7 +396,7 @@ map_sort(sort, {match_objects, _Id}) ->
     %% Sort a match_objects by the score of the match
     {true, [
         <<"_score">>,           %% Primary sort on score
-        <<"modified:desc">>
+        <<"publication_start:desc">>
     ]};
 map_sort(SortKey, {SortKey, Property}) ->
     map_sort_1(Property, <<"asc">>);
@@ -454,39 +467,20 @@ map_query({query_id, Id}, Context) ->
     ElasticQuery = z_html:unescape(m_rsc:p(Id, <<"elastic_query">>, Context)),
     map_query({elastic_query, ElasticQuery}, Context);
 map_query({match_objects, ObjectIds}, Context) when is_list(ObjectIds) ->
-    Clauses = map_edge(any, ObjectIds, <<"outgoing_edges">>, Context),
-    {true, on_resource(
-        #{
-            <<"nested">> => #{
-                <<"path">> => <<"outgoing_edges">>,
-                <<"query">> => #{
-                    <<"bool">> => #{
-                        <<"should">> => Clauses
-                    }
-                }
-            }
-        }
-    )};
+    Text = lists:map(
+        fun(Id) ->
+            <<" zpo", (integer_to_binary(Id))/binary>>
+        end,
+        ObjectIds),
+    Text1 = iolist_to_binary(Text),
+    {true, #{<<"simple_query_string">> => #{
+        <<"query">> => Text1,
+        <<"fields">> => [ <<"pivot_rtsv">> ]
+    }}};
 map_query({match_objects, Id}, Context) ->
     %% Look up all outgoing edges of this resource
-    Clauses = lists:map(
-        fun({Predicate, OutgoingEdges}) ->
-            ObjectIds = [proplists:get_value(object_id, Edge) || Edge <- OutgoingEdges],
-            map_outgoing_edge(Predicate, ObjectIds, Context)
-        end,
-        m_edge:get_edges(Id, Context)
-    ),
-
-    {true, on_resource(
-        #{<<"nested">> => #{
-            <<"path">> => <<"outgoing_edges">>,
-            <<"query">> => #{
-                <<"bool">> => #{
-                    <<"should">> => Clauses
-                }
-            }
-        }}
-    )};
+    ObjectIds = m_edge:objects(Id, Context),
+    map_query({match_objects, ObjectIds}, Context);
 map_query({query_context_filter, Filter}, Context) ->
     %% Query context filters
     map_filter(Filter, Context);

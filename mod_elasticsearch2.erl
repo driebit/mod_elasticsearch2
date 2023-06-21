@@ -321,7 +321,7 @@ handle_info(bulk_flush, #state{ context = Context, timer = Timer, bulk_pid = und
             timer:cancel(Timer),
             {Batch, Remaining} = take(?BULK_MAX_BATCH, Queue, []),
             Connection = elasticsearch2:connection(Context),
-            lager:info("mod_elasticsearch2: processing batch of ~p items (~p more queued)",
+            lager:debug("mod_elasticsearch2: processing batch of ~p items (~p more queued)",
                        [ length(Batch), queue:len(Remaining) ]),
             Self = self(),
             Pid = erlang:spawn(
@@ -382,6 +382,16 @@ search(#search_query{search = {elastic_suggest, _Query}} = Search, Context) ->
     elasticsearch2_search:search(Search, Context);
 search(#search_query{search = {elastic_didyoumean, _Query}} = Search, Context) ->
     elasticsearch2_search:search(Search, Context);
+search(#search_query{search = {match_objects, Args}} = Search, Context) ->
+    Id = m_rsc:rid(proplists:get_value(id,Args), Context),
+    Query = [
+        {match_objects, Id},
+        {id_exclude, Id}
+        | proplists:delete(id, Args)
+    ],
+    Search1 = Search#search_query{ search = {query, Query} },
+    Options = #elasticsearch_options{ return_score = true },
+    elasticsearch2_search:search(Search1, Options, Context);
 search(#search_query{search = {query, _Query}} = Search, Context) ->
     Options = #elasticsearch_options{ fallback = true },
     elasticsearch2_search:search(Search, Options, Context);
