@@ -20,7 +20,8 @@
 -module(elasticsearch2_query_rsc).
 
 -export([
-    parse/2
+    parse/2,
+    split_list/1
 ]).
 
 % -include_lib("zotonic.hrl").
@@ -40,11 +41,27 @@ maybe_split_list(Id) when is_integer(Id) ->
 maybe_split_list(<<"true">>) ->
     true;
 maybe_split_list(<<"[", _/binary>> = Binary) ->
-    Parsed = search_parse_list:parse(Binary),
-    ParsedUnquoted = [unquot(P) || P <- Parsed],
-    lists:filter(fun(Part) -> Part =/= <<>> end, ParsedUnquoted);
+    split_list(Binary);
 maybe_split_list(Other) ->
     Other.
+
+% Convert an expression like [123,hasdocument]
+-spec split_list(Term) -> List when
+    Term :: binary() | string() | term(),
+    List :: [ term() ].
+split_list(<<"[", _/binary>> = Term) ->
+    unquote_all(search_parse_list:parse(Term));
+split_list([$[|Rest]) ->
+    unquote_all(search_parse_list:parse(z_convert:to_binary(Rest)));
+split_list(Other) ->
+    [Other].
+
+unquote_all(L) when is_list(L) ->
+    lists:map(fun unquote_all/1, L);
+unquote_all(B) when is_binary(B) ->
+    unquot(z_string:trim(B));
+unquote_all(T) ->
+    T.
 
 unquot(<<C, Rest/binary>>) when C =:= $'; C =:= $"; C =:= $` ->
     binary:replace(Rest, <<C>>, <<>>);

@@ -617,10 +617,12 @@ map_must({hasobject, [Object, Predicate]}, Context) ->
 map_must({hasobject, [Object]}, Context) ->
     map_must({hasobject, Object}, Context);
 map_must({hasobject, Object}, Context) ->
-    case maybe_split_list(Object) of
+    case elasticsearch2_query_rsc:split_list(Object) of
         [Obj] ->
             map_must({hasobject, [Obj, any]}, Context);
-        Other ->
+        [Obj, <<>>] ->
+            map_must({hasobject, [Obj, any]}, Context);
+        [_|_] = Other ->
             map_must({hasobject, Other}, Context)
     end;
 %% @doc hassubject: all resources that have an incoming edge from Subject.
@@ -634,10 +636,12 @@ map_must({hassubject, [Subject, Predicate]}, Context) ->
         }
     }};
 map_must({hassubject, Subject}, Context) ->
-    case maybe_split_list(Subject) of
+    case elasticsearch2_query_rsc:split_list(Subject) of
         [Subj] ->
             map_must({hassubject, [Subj, any]}, Context);
-        Other ->
+        [Subj, <<>>] ->
+            map_must({hassubject, [Subj, any]}, Context);
+        [_|_] = Other ->
             map_must({hassubject, Other}, Context)
     end;
 map_must({hasanyobject, ObjectPredicates}, Context) ->
@@ -674,28 +678,6 @@ proplist_to_map([{Key, Value}|Tail]) ->
     Next#{Key => proplist_to_map(Value)};
 proplist_to_map(Value) ->
     Value.
-
-% Convert an expression like [123,hasdocument]
-maybe_split_list(<<"[", _/binary>> = Term) ->
-    unquote_all(search_parse_list:parse(Term));
-maybe_split_list([$[|Rest]) ->
-    unquote_all(search_parse_list:parse(z_convert:to_binary(Rest)));
-maybe_split_list(Other) ->
-    [Other].
-
-unquote_all(L) when is_list(L) ->
-    lists:map(fun unquote_all/1, L);
-unquote_all(B) when is_binary(B) ->
-    unquot(z_string:trim(B));
-unquote_all(T) ->
-    T.
-
-unquot(<<C, Rest/binary>>) when C =:= $'; C =:= $"; C =:= $` ->
-    binary:replace(Rest, <<C>>, <<>>);
-unquot([C|Rest]) when C =:= $'; C =:= $"; C =:= $` ->
-    [ X || X <- Rest, X =/= C ];
-unquot(B) ->
-    B.
 
 
 %% @doc Map aggregations (facets).
