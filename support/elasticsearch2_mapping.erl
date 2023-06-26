@@ -1,9 +1,9 @@
 %% @author Driebit <tech@driebit.nl>
-%% @copyright 2022 Driebit BV
+%% @copyright 2022-2023 Driebit BV
 %% @doc Map resources to Elastic Search documents.
 %% @end
 
-%% Copyright 2022 Driebit BV
+%% Copyright 2022-2023 Driebit BV
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -142,9 +142,17 @@ map_rsc(Id, Context) ->
         es_type => <<"resource">>,
         category => m_rsc:is_a(Id, Context),
         pivot_title => default_translation(proplists:get_value(title, RscProps), Context),
+        pivot_rtsv => map_rtsv(m_edge:objects(Id, Context)),
         incoming_edges => incoming_edges(Id, Context),
         outgoing_edges => outgoing_edges(Id, Context)
     }.
+
+map_rtsv(ObjectIds) ->
+    lists:map(
+        fun(Id) ->
+            <<" zpo", (integer_to_binary(Id))/binary>>
+        end,
+        ObjectIds).
 
 %% @doc Get dynamic language mappings, based on available languages.
 -spec dynamic_language_mapping(z:context()) -> list( map() ).

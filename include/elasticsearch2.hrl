@@ -10,8 +10,10 @@
 
 %% @doc Search options
 %%      fallback: whether to fall back to PostgreSQL for non full-text searches.
+%%      return_score: return {id, score} tuples, otherwise only return id
 -record(elasticsearch_options, {
-    fallback = true :: boolean()
+    fallback = true :: boolean(),
+    return_score = false :: boolean()
 }).
 
 
