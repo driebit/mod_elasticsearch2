@@ -23,7 +23,7 @@
     parse/2
 ]).
 
--include_lib("zotonic.hrl").
+% -include_lib("zotonic.hrl").
 
 %% @doc Parse a Zotonic query resource text.
 parse(QueryId, Context) ->
