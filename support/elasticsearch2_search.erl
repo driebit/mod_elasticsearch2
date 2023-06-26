@@ -617,7 +617,14 @@ map_must({hasobject, [Object, Predicate]}, Context) ->
 map_must({hasobject, [Object]}, Context) ->
     map_must({hasobject, Object}, Context);
 map_must({hasobject, Object}, Context) ->
-    map_must({hasobject, [Object, any]}, Context);
+    case elasticsearch2_query_rsc:split_list(Object) of
+        [Obj] ->
+            map_must({hasobject, [Obj, any]}, Context);
+        [Obj, <<>>] ->
+            map_must({hasobject, [Obj, any]}, Context);
+        [_|_] = Other ->
+            map_must({hasobject, Other}, Context)
+    end;
 %% @doc hassubject: all resources that have an incoming edge from Subject.
 map_must({hassubject, [Subject]}, Context) ->
     map_must({hassubject, Subject}, Context);
@@ -629,7 +636,14 @@ map_must({hassubject, [Subject, Predicate]}, Context) ->
         }
     }};
 map_must({hassubject, Subject}, Context) ->
-    map_must({hassubject, [Subject, any]}, Context);
+    case elasticsearch2_query_rsc:split_list(Subject) of
+        [Subj] ->
+            map_must({hassubject, [Subj, any]}, Context);
+        [Subj, <<>>] ->
+            map_must({hassubject, [Subj, any]}, Context);
+        [_|_] = Other ->
+            map_must({hassubject, Other}, Context)
+    end;
 map_must({hasanyobject, ObjectPredicates}, Context) ->
     Expanded = search_query:expand_object_predicates(ObjectPredicates, Context),
     OutgoingEdges = [map_outgoing_edge(Predicate, [Object], Context) || {Object, Predicate} <- Expanded],
