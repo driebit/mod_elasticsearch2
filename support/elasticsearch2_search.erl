@@ -438,8 +438,9 @@ map_query({text, Text}, Context) ->
         <<"*">>,
         <<"title*^2">>
     ],
+    Text1 = add_suffix(Text),
     {true, #{<<"simple_query_string">> => #{
-        <<"query">> => Text,
+        <<"query">> => Text1,
         <<"fields">> => z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context)
     }}};
 map_query({prefix, Prefix}, Context) when not is_binary(Prefix) ->
@@ -720,6 +721,56 @@ filter_categories(Cats, Context) ->
         end,
         Cats
     ).
+
+% Add wildcards to the text unless there are operators.
+add_suffix(Text) ->
+    Text1 = z_convert:to_binary(Text),
+    case        binary:match(Text1, <<"\"">>) =:= nomatch
+        andalso binary:match(Text1, <<"*">>) =:= nomatch
+        andalso binary:match(Text1, <<"-">>) =:= nomatch
+        andalso binary:match(Text1, <<"+">>) =:= nomatch
+        andalso binary:match(Text1, <<"^">>) =:= nomatch
+    of
+        true ->
+            Parts = binary:split(z_convert:to_binary(Text), <<$">>, [ global ]),
+            EditedParts = case Parts of
+                [ _ ] -> add_suffix_list(Parts);
+                _ -> add_suffix_for_multiple(Parts)
+            end,
+            iolist_to_binary(z_utils:combine(" ", EditedParts));
+        false ->
+            Text1
+    end.
+
+add_suffix_for_multiple(Parts) ->
+    lists:foldl(
+        fun(Part, Acc) ->
+            case Part of
+                <<>> ->
+                    Acc;
+                <<" ",_/binary>> ->
+                    Acc++add_suffix_list(Part);
+                _ ->
+                    Part1 = z_convert:to_list(Part),
+                    case string:right(Part1, 1) of
+                        " " -> Acc++add_suffix_list(Part);
+                        _ -> Acc++["\""++z_string:trim(Part1)++"\""]
+                    end
+            end
+        end,
+        [],
+        Parts
+    ).
+
+% split parts on space, add asterix for better search results
+add_suffix_list(Text) ->
+    Parts = binary:split(z_convert:to_binary(Text), <<" ">>, [ global, trim_all ]),
+    lists:flatten(
+        lists:map(
+            fun(P) ->
+                [ P, <<P/binary, "*">> ]
+            end,
+            Parts)).
 
 
 %% @doc Map pivot column name to regular property name.
