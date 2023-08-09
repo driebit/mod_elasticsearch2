@@ -22,7 +22,9 @@
 -export([
     search/2,
     search/3,
-    build_query/3
+    build_query/3,
+
+    add_wildcards/1
 ]).
 
 -include_lib("zotonic.hrl").
@@ -434,15 +436,23 @@ map_query({text, <<"id:", _/binary>>}, _Context) ->
     %% Find by id: don't create a fulltext search clause
     false;
 map_query({text, Text}, Context) ->
+    % https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html
     DefaultFields = [
         <<"*">>,
         <<"title*^2">>
     ],
-    Text1 = add_suffix(Text),
-    {true, #{<<"simple_query_string">> => #{
-        <<"query">> => Text1,
-        <<"fields">> => z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context)
-    }}};
+    {SearchText, Ops} = add_wildcards(Text),
+    {true, #{
+        <<"simple_query_string">> => #{
+            <<"query">> => SearchText,
+            <<"fields">> => z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
+            <<"default_operator">> => <<"OR">>,
+            <<"flags">> => case Ops of
+                default -> <<"ALL">>;
+                prefix -> <<"PREFIX|WHITESPACE">>
+            end
+        }
+    }};
 map_query({prefix, Prefix}, Context) when not is_binary(Prefix) ->
     map_query({prefix, z_convert:to_binary(Prefix)}, Context);
 map_query({prefix, <<>>}, _Context) ->
@@ -470,7 +480,12 @@ map_query({query_id, Id}, Context) ->
 map_query({match_objects, ObjectIds}, Context) when is_list(ObjectIds) ->
     Text = lists:map(
         fun(Id) ->
-            <<" zpo", (integer_to_binary(Id))/binary>>
+            case m_rsc:rid(Id, Context) of
+                undefined ->
+                    <<>>;
+                RId ->
+                    <<" zpo", (integer_to_binary(RId))/binary>>
+            end
         end,
         ObjectIds),
     Text1 = iolist_to_binary(Text),
@@ -723,48 +738,35 @@ filter_categories(Cats, Context) ->
     ).
 
 % Add wildcards to the text unless there are operators.
-add_suffix(Text) ->
+add_wildcards(Text) ->
     Text1 = z_convert:to_binary(Text),
-    case        binary:match(Text1, <<"\"">>) =:= nomatch
-        andalso binary:match(Text1, <<"*">>) =:= nomatch
-        andalso binary:match(Text1, <<"-">>) =:= nomatch
-        andalso binary:match(Text1, <<"+">>) =:= nomatch
-        andalso binary:match(Text1, <<"^">>) =:= nomatch
-    of
-        true ->
-            Parts = binary:split(z_convert:to_binary(Text), <<$">>, [ global ]),
-            EditedParts = case Parts of
-                [ _ ] -> add_suffix_list(Parts);
-                _ -> add_suffix_for_multiple(Parts)
-            end,
-            iolist_to_binary(z_utils:combine(" ", EditedParts));
+    case is_with_operators(Text1) of
         false ->
-            Text1
+            {iolist_to_binary(lists:join(32, add_wildcards_1(Text1))), prefix};
+        true ->
+            {Text1, default}
     end.
 
-add_suffix_for_multiple(Parts) ->
-    lists:foldl(
-        fun(Part, Acc) ->
-            case Part of
-                <<>> ->
-                    Acc;
-                <<" ",_/binary>> ->
-                    Acc++add_suffix_list(Part);
-                _ ->
-                    Part1 = z_convert:to_list(Part),
-                    case string:right(Part1, 1) of
-                        " " -> Acc++add_suffix_list(Part);
-                        _ -> Acc++["\""++z_string:trim(Part1)++"\""]
-                    end
-            end
-        end,
-        [],
-        Parts
-    ).
+%% @doc Check if the text contains operators. This is a bit of a heuristic, as it
+%% is not always clear if a '-' is just a normal character in a name or an operator.
+%% https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html
+is_with_operators(<<>>) -> false;
+is_with_operators(<<" ", T/binary>>) -> is_with_operators(T);
+is_with_operators(<<"\"", _/binary>>) -> true;
+is_with_operators(<<"-", _/binary>>) -> true;
+is_with_operators(<<"+", _/binary>>) -> true;
+is_with_operators(S) ->
+    binary:match(S, <<"\"">>) =/= nomatch
+    orelse binary:last(S) =:= $*
+    orelse re:run(S, <<" [-+][^ ]">>) =/= nomatch
+    orelse re:run(S, <<" \\+ ">>) =/= nomatch
+    orelse re:run(S, <<" (AND|OR) ">>) =/= nomatch
+    orelse re:run(S, <<"[^ ]\\~[0-9]">>) =/= nomatch
+    orelse re:run(S, <<"[^ ]\\* ">>) =/= nomatch.
 
 % split parts on space, add asterix for better search results
-add_suffix_list(Text) ->
-    Parts = binary:split(z_convert:to_binary(Text), <<" ">>, [ global, trim_all ]),
+add_wildcards_1(Text) ->
+    Parts = binary:split(Text, <<" ">>, [ global, trim_all ]),
     lists:flatten(
         lists:map(
             fun(P) ->
