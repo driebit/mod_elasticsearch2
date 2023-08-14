@@ -441,18 +441,32 @@ map_query({text, Text}, Context) ->
         <<"*">>,
         <<"title*^2">>
     ],
-    {SearchText, Ops} = add_wildcards(Text),
-    {true, #{
-        <<"simple_query_string">> => #{
-            <<"query">> => SearchText,
-            <<"fields">> => z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
-            <<"default_operator">> => <<"OR">>,
-            <<"flags">> => case Ops of
-                default -> <<"ALL">>;
-                prefix -> <<"PREFIX|WHITESPACE">>
-            end
-        }
-    }};
+    Fields = z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
+    Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
+        true ->
+            #{
+                <<"simple_query_string">> => #{
+                    <<"query">> => Text,
+                    <<"fields">> => Fields,
+                    <<"default_operator">> => <<"OR">>,
+                    <<"flags">> => <<"ALL">>
+                }
+            };
+        false ->
+            {SearchText, Ops} = add_wildcards(Text),
+            #{
+                <<"simple_query_string">> => #{
+                    <<"query">> => SearchText,
+                    <<"fields">> => Fields,
+                    <<"default_operator">> => <<"OR">>,
+                    <<"flags">> => case Ops of
+                        default -> <<"ALL">>;
+                        prefix -> <<"PREFIX|WHITESPACE">>
+                    end
+                }
+            }
+    end,
+    {true, Query};
 map_query({prefix, Prefix}, Context) when not is_binary(Prefix) ->
     map_query({prefix, z_convert:to_binary(Prefix)}, Context);
 map_query({prefix, <<>>}, _Context) ->

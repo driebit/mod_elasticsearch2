@@ -135,6 +135,18 @@ z_search:search(
 ).
 ```
 
+### Wildcards
+
+The `text` query term is modified to search for prefix strings by appending `*` operators to the words in the query string.
+
+This is _not_ done if either:
+
+ * the search text contains simple query string operators, especially the `"`; or
+ * the config `mod_elasticsearch2.no_automatic_wildcard` is set to a true-ish value.
+
+See https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html for the query string operators.
+
+
 Buffered put/delete
 -------------------
 
