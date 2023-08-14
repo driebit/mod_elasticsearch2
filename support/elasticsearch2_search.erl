@@ -22,7 +22,9 @@
 -export([
     search/2,
     search/3,
-    build_query/3
+    build_query/3,
+
+    add_wildcards/1
 ]).
 
 -include_lib("zotonic.hrl").
@@ -434,14 +436,37 @@ map_query({text, <<"id:", _/binary>>}, _Context) ->
     %% Find by id: don't create a fulltext search clause
     false;
 map_query({text, Text}, Context) ->
+    % https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html
     DefaultFields = [
         <<"*">>,
         <<"title*^2">>
     ],
-    {true, #{<<"simple_query_string">> => #{
-        <<"query">> => Text,
-        <<"fields">> => z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context)
-    }}};
+    Fields = z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
+    Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
+        true ->
+            #{
+                <<"simple_query_string">> => #{
+                    <<"query">> => Text,
+                    <<"fields">> => Fields,
+                    <<"default_operator">> => <<"OR">>,
+                    <<"flags">> => <<"ALL">>
+                }
+            };
+        false ->
+            {SearchText, Ops} = add_wildcards(Text),
+            #{
+                <<"simple_query_string">> => #{
+                    <<"query">> => SearchText,
+                    <<"fields">> => Fields,
+                    <<"default_operator">> => <<"OR">>,
+                    <<"flags">> => case Ops of
+                        default -> <<"ALL">>;
+                        prefix -> <<"PREFIX|WHITESPACE">>
+                    end
+                }
+            }
+    end,
+    {true, Query};
 map_query({prefix, Prefix}, Context) when not is_binary(Prefix) ->
     map_query({prefix, z_convert:to_binary(Prefix)}, Context);
 map_query({prefix, <<>>}, _Context) ->
@@ -469,7 +494,12 @@ map_query({query_id, Id}, Context) ->
 map_query({match_objects, ObjectIds}, Context) when is_list(ObjectIds) ->
     Text = lists:map(
         fun(Id) ->
-            <<" zpo", (integer_to_binary(Id))/binary>>
+            case m_rsc:rid(Id, Context) of
+                undefined ->
+                    <<>>;
+                RId ->
+                    <<" zpo", (integer_to_binary(RId))/binary>>
+            end
         end,
         ObjectIds),
     Text1 = iolist_to_binary(Text),
@@ -720,6 +750,43 @@ filter_categories(Cats, Context) ->
         end,
         Cats
     ).
+
+% Add wildcards to the text unless there are operators.
+add_wildcards(Text) ->
+    Text1 = z_convert:to_binary(Text),
+    case is_with_operators(Text1) of
+        false ->
+            {iolist_to_binary(lists:join(32, add_wildcards_1(Text1))), prefix};
+        true ->
+            {Text1, default}
+    end.
+
+%% @doc Check if the text contains operators. This is a bit of a heuristic, as it
+%% is not always clear if a '-' is just a normal character in a name or an operator.
+%% https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html
+is_with_operators(<<>>) -> false;
+is_with_operators(<<" ", T/binary>>) -> is_with_operators(T);
+is_with_operators(<<"\"", _/binary>>) -> true;
+is_with_operators(<<"-", _/binary>>) -> true;
+is_with_operators(<<"+", _/binary>>) -> true;
+is_with_operators(S) ->
+    binary:match(S, <<"\"">>) =/= nomatch
+    orelse binary:last(S) =:= $*
+    orelse re:run(S, <<" [-+][^ ]">>) =/= nomatch
+    orelse re:run(S, <<" \\+ ">>) =/= nomatch
+    orelse re:run(S, <<" (AND|OR) ">>) =/= nomatch
+    orelse re:run(S, <<"[^ ]\\~[0-9]">>) =/= nomatch
+    orelse re:run(S, <<"[^ ]\\* ">>) =/= nomatch.
+
+% split parts on space, add asterix for better search results
+add_wildcards_1(Text) ->
+    Parts = binary:split(Text, <<" ">>, [ global, trim_all ]),
+    lists:flatten(
+        lists:map(
+            fun(P) ->
+                [ P, <<P/binary, "*">> ]
+            end,
+            Parts)).
 
 
 %% @doc Map pivot column name to regular property name.
