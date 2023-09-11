@@ -465,13 +465,19 @@ map_query({text, Text}, Context) ->
         <<"title*^2">>
     ],
     Fields = z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
+    DefOpCfg = m_config:get_value(mod_elasticsearch2, default_operator, Context),
+    DefaultOperator = case z_convert:to_upper(z_convert:to_binary(DefOpCfg)) of
+        <<"AND">> = DefOp -> DefOp;
+        <<"OR">> = DefOp -> DefOp;
+        _ -> <<"AND">>
+    end,
     Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
         true ->
             #{
                 <<"simple_query_string">> => #{
                     <<"query">> => Text,
                     <<"fields">> => Fields,
-                    <<"default_operator">> => <<"AND">>,
+                    <<"default_operator">> => DefaultOperator,
                     <<"flags">> => <<"ALL">>
                 }
             };
@@ -486,7 +492,7 @@ map_query({text, Text}, Context) ->
                 <<"simple_query_string">> => #{
                     <<"query">> => SearchText1,
                     <<"fields">> => Fields,
-                    <<"default_operator">> => <<"AND">>,
+                    <<"default_operator">> => DefaultOperator,
                     <<"flags">> => case Ops of
                         default -> <<"ALL">>;
                         prefix -> <<"PREFIX|WHITESPACE|OR|PRECEDENCE|PHRASE">>
