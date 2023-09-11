@@ -34,7 +34,7 @@ Config keys:
    This config key defaults to `true`.
 
  * `mod_elasticsearch2.default_operator`  The default text operator for words in a query string.
-   This is either AND or OR.  Defaults to 'AND'.
+   This is either AND or OR.  Defaults to 'OR'.
 
  * `mod_elasticsearch2.no_automatic_wildcard` Automatically add wildcards to the words in a text
    search string. The rewrites `"The quick fox"` to `((the | the*) (quick | quick*) (fox | fox*)) | "the quick fox"`  Defaults to `true`.

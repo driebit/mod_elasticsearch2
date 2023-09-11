@@ -469,7 +469,7 @@ map_query({text, Text}, Context) ->
     DefaultOperator = case z_convert:to_upper(z_convert:to_binary(DefOpCfg)) of
         <<"AND">> = DefOp -> DefOp;
         <<"OR">> = DefOp -> DefOp;
-        _ -> <<"AND">>
+        _ -> <<"OR">>
     end,
     Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
         true ->
