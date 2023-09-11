@@ -27,12 +27,19 @@ Or in your site config:
  * `mod_elasticsearch2.host`
  * `mod_elasticsearch2.port`
 
-Elastic search normally doesn't count hits beyond 10K. To enable or disable counting the real
-total number of hits set the config key:
+Config keys:
 
- * `mod_elasticsearch2.track_total_hits`
+ * `mod_elasticsearch2.track_total_hits` Elastic search normally doesn't count hits beyond 10K.
+   To enable or disable counting the real total number of hits set this config.
+   Defaults to `true` (track total hits).
 
-This config key defaults to `true`.
+ * `mod_elasticsearch2.default_operator`  The default text operator for words in a query string.
+   This is either AND or OR. Defaults to 'OR'.
+
+ * `mod_elasticsearch2.no_automatic_wildcard` Do not automatically add wildcards to the words
+   in a text search string. The rewrites `"The quick fox"` to 
+   `((the | the*) (quick | quick*) (fox | fox*)) | "the quick fox"`
+   Defaults to `false` (do add wildcards).
 
 
 ### Elasticsearch security config

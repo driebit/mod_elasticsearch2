@@ -246,10 +246,33 @@ do_search(ElasticQuery, QArgs, ZotonicQuery, {From, Size}, Context) ->
     Connection = elasticsearch2:connection(Context),
     case elasticsearch2_fetch:request(Connection, post, [ Index, <<"_search">> ], QArgs, JSON) of
         {ok, Result} ->
+            % io:format("~p", [ scores(Result) ]),
+            case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, log_scores, Context)) of
+                true ->
+                    lager:info("ES2 Query scores: ~p", [ scores(Result) ]);
+                false ->
+                    ok
+            end,
             search_result(Result, ElasticQuery2, ZotonicQuery, {From, Size});
         {error, _} ->
             #search_result{}
     end.
+
+scores(#{
+        <<"hits">> := #{
+            <<"hits">> := Docs
+        }
+    }) ->
+    lists:map(
+        fun(#{
+                <<"_id">> := Id,
+                <<"_score">> := Score
+            }) ->
+            {Score, Id}
+        end,
+        Docs);
+scores(_) ->
+    [].
 
 fix_type(Map) when is_map(Map) ->
     maps:fold(
@@ -442,26 +465,37 @@ map_query({text, Text}, Context) ->
         <<"title*^2">>
     ],
     Fields = z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
+    DefOpCfg = m_config:get_value(mod_elasticsearch2, default_operator, Context),
+    DefaultOperator = case z_convert:to_upper(z_convert:to_binary(DefOpCfg)) of
+        <<"AND">> = DefOp -> DefOp;
+        <<"OR">> = DefOp -> DefOp;
+        _ -> <<"OR">>
+    end,
     Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
         true ->
             #{
                 <<"simple_query_string">> => #{
                     <<"query">> => Text,
                     <<"fields">> => Fields,
-                    <<"default_operator">> => <<"OR">>,
+                    <<"default_operator">> => DefaultOperator,
                     <<"flags">> => <<"ALL">>
                 }
             };
         false ->
             {SearchText, Ops} = add_wildcards(Text),
+            SearchText1 = iolist_to_binary([
+                    $(, SearchText, $),
+                    " | ",
+                    $", Text, $"
+                ]),
             #{
                 <<"simple_query_string">> => #{
-                    <<"query">> => SearchText,
+                    <<"query">> => SearchText1,
                     <<"fields">> => Fields,
-                    <<"default_operator">> => <<"OR">>,
+                    <<"default_operator">> => DefaultOperator,
                     <<"flags">> => case Ops of
                         default -> <<"ALL">>;
-                        prefix -> <<"PREFIX|WHITESPACE">>
+                        prefix -> <<"PREFIX|WHITESPACE|OR|PRECEDENCE|PHRASE">>
                     end
                 }
             }
@@ -781,12 +815,18 @@ is_with_operators(S) ->
 % split parts on space, add asterix for better search results
 add_wildcards_1(Text) ->
     Parts = binary:split(Text, <<" ">>, [ global, trim_all ]),
-    lists:flatten(
+    WsParts = lists:flatten(
         lists:map(
             fun(P) ->
-                [ P, <<P/binary, "*">> ]
+                [
+                    $(,
+                        P, " | ",
+                        <<P/binary, "*">>,
+                    $)
+                ]
             end,
-            Parts)).
+            Parts)),
+    WsParts.
 
 
 %% @doc Map pivot column name to regular property name.
