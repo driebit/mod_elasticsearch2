@@ -471,8 +471,9 @@ map_query({text, Text}, Context) ->
         <<"OR">> = DefOp -> DefOp;
         _ -> <<"OR">>
     end,
-    Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
-        true ->
+    AddWildcards = m_config:get_value(mod_elasticsearch2, add_search_wildcards, true, Context),
+    Query = case z_convert:to_bool(AddWildcards) of
+        false ->
             #{
                 <<"simple_query_string">> => #{
                     <<"query">> => Text,
@@ -481,7 +482,7 @@ map_query({text, Text}, Context) ->
                     <<"flags">> => <<"ALL">>
                 }
             };
-        false ->
+        true ->
             {SearchText, Ops} = add_wildcards(Text),
             SearchText1 = iolist_to_binary([
                     $(, SearchText, $),
