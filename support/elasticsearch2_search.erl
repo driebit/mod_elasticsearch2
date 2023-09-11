@@ -489,7 +489,7 @@ map_query({text, Text}, Context) ->
                     <<"default_operator">> => <<"AND">>,
                     <<"flags">> => case Ops of
                         default -> <<"ALL">>;
-                        prefix -> <<"PREFIX|WHITESPACE|OR|PRECEDENCE">>
+                        prefix -> <<"PREFIX|WHITESPACE|OR|PRECEDENCE|PHRASE">>
                     end
                 }
             }
