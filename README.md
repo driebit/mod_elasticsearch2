@@ -36,11 +36,13 @@ Config keys:
  * `mod_elasticsearch2.default_operator`  The default text operator for words in a query string.
    This is either AND or OR. Defaults to 'OR'.
 
- * `mod_elasticsearch2.no_automatic_wildcard` Do not automatically add wildcards to the words
+ * `mod_elasticsearch2.search_text_as_is` Do not automatically add wildcards to the words
    in a text search string. The rewrites `"The quick fox"` to 
    `((the | the*) (quick | quick*) (fox | fox*)) | "the quick fox"`
    Defaults to `false` (do add wildcards).
 
+ * `mod_elasticsearch2.log_scores` Set to `true` to add an _info_ level log messages with the 
+   document scores after each search. Useful for understanding search results. Defaults to `false`.
 
 ### Elasticsearch security config
 

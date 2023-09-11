@@ -471,7 +471,7 @@ map_query({text, Text}, Context) ->
         <<"OR">> = DefOp -> DefOp;
         _ -> <<"OR">>
     end,
-    Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, no_automatic_wildcard, Context)) of
+    Query = case z_convert:to_bool(m_config:get_value(mod_elasticsearch2, search_text_as_is, Context)) of
         true ->
             #{
                 <<"simple_query_string">> => #{
