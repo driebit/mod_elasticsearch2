@@ -466,7 +466,7 @@ map_query({text, Text}, Context) ->
     ],
     Fields = z_notifier:foldr(#elasticsearch_fields{query = Text}, DefaultFields, Context),
     DefOpCfg = m_config:get_value(mod_elasticsearch2, default_operator, Context),
-    DefaultOperator = case z_convert:to_upper(z_convert:to_binary(DefOpCfg)) of
+    DefaultOperator = case z_string:to_upper(z_convert:to_binary(DefOpCfg)) of
         <<"AND">> = DefOp -> DefOp;
         <<"OR">> = DefOp -> DefOp;
         _ -> <<"OR">>
