@@ -169,6 +169,7 @@ is_elasticsearch_props([{match_objects, _} | _]) ->
 is_elasticsearch_props([_Prop | List]) ->
     is_elasticsearch_props(List).
 
+-define(is_random(S), (S =:= random orelse S =:= "random" orelse S =:= <<"random">>)).
 
 build_function_score(Query, Context) ->
     FunctionScore = #{
@@ -183,10 +184,8 @@ build_function_score(Query, Context) ->
     % Because the bool query returns scores of 0, we set the boost_mode to additive instead of multiplicative,
     % as suggested in https://github.com/elastic/elasticsearch/issues/18273#issuecomment-218482493
     case proplists:get_value(sort, Query, undefined) of
-        <<"random">> ->
-            FunctionScore#{ <<"boost_mode">> => <<"sum">> };
-        _ ->
-            FunctionScore
+        S when ?is_random(S) -> FunctionScore#{ <<"boost_mode">> => <<"sum">> };
+        _ -> FunctionScore
     end.
 
 %% @doc Build Elasticsearch query from Zotonic query
@@ -222,9 +221,17 @@ map_score_function(_Query, {score_function, #{<<"filter">> := Filter} = Function
     {true, Function#{<<"filter">> => build_filter(Filter, Context)}};
 map_score_function(_Query, {score_function, Function}, _Context) ->
     {true, Function};
-map_score_function(Query, {sort, <<"random">>}, _Context) ->
-    Seed = proplists:get_value(seed, Query, os:system_time()),
-    {true, #{<<"random_score">> => #{<<"seed">> => Seed}}};
+map_score_function(_Query, {sort, S}, _Context) when ?is_random(S) ->
+    % Do no use random_score, as that loads the document's uid, which gives the error:
+    % > Fielddata access on the _id field is disallowed, you can re-enable it by updating
+    % > the dynamic cluster setting: indices.id_field_data.enabled
+    {true, #{
+        <<"script_score">> => #{
+            <<"script">> => #{
+                <<"inline">> => <<"Math.random() * 200000">>
+            }
+        }
+    }};
 map_score_function(_, _, _) ->
     false.
 
@@ -242,7 +249,7 @@ do_search(ElasticQuery, QArgs, ZotonicQuery, {From, Size}, Context) ->
     Index = z_convert:to_binary(proplists:get_value(index, ZotonicQuery, elasticsearch2:index(Context))),
     JSON = jsx:encode(ElasticQuery2),
     lager:debug("mod_elasticsearch2 (~s): ~s", [ Index, JSON ]),
-    % io:format("~p:~p: (~s) ~n~p~n~n", [ ?MODULE, ?LINE, Index, ElasticQuery2 ]),
+    % io:format("~p:~p: (~s) ~n~s~n~n", [ ?MODULE, ?LINE, Index, JSON ]),
     Connection = elasticsearch2:connection(Context),
     case elasticsearch2_fetch:request(Connection, post, [ Index, <<"_search">> ], QArgs, JSON) of
         {ok, Result} ->
