@@ -590,6 +590,8 @@ map_must_not({exclude_document, [Type, Id]}, _Context) ->
     }};
 map_must_not({id_exclude, Id}, _Context) when Id =/= undefined ->
     {true, #{<<"term">> => #{<<"id">> => z_convert:to_integer(Id)}}};
+map_must_not({match_objects, Id}, _Context) when is_integer(Id) ->
+    {true, #{<<"term">> => #{<<"id">> => Id}}};
 map_must_not(_, _Context) ->
     false.
 
