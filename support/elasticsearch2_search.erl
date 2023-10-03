@@ -465,8 +465,9 @@ map_query({text, <<>>}, _Context) ->
 map_query({text, <<"id:", _/binary>>}, _Context) ->
     %% Find by id: don't create a fulltext search clause
     false;
-map_query({text, Text}, Context) ->
+map_query({text, Text0}, Context) ->
     % https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html
+    Text = fix_quotes(Text0),
     DefaultFields = [
         <<"*">>,
         <<"title*^2">>
@@ -491,11 +492,16 @@ map_query({text, Text}, Context) ->
             };
         true ->
             {SearchText, Ops} = add_wildcards(Text),
-            SearchText1 = iolist_to_binary([
-                    $(, SearchText, $),
-                    " | ",
-                    $", Text, $"
-                ]),
+            SearchText1 = case Ops of
+                default ->
+                    SearchText;
+                prefix ->
+                    iolist_to_binary([
+                        $(, SearchText, $),
+                        " | ",
+                        $", Text, $"
+                    ])
+            end,
             #{
                 <<"simple_query_string">> => #{
                     <<"query">> => SearchText1,
@@ -838,6 +844,12 @@ add_wildcards_1(Text) ->
             Parts)),
     WsParts.
 
+% Replace "curly" quotes in a text, some browsers add these when ASCII quotes
+% are typed.
+fix_quotes(Text) ->
+    T1 = z_convert:to_binary(Text),
+    T2 = binary:replace(T1, <<"“"/utf8>>, <<$">>, [ global ]),
+    binary:replace(T2, <<"”"/utf8>>, <<$">>, [ global ]).
 
 %% @doc Map pivot column name to regular property name.
 %% @see z_pivot_rsc:pivot_resource/2
